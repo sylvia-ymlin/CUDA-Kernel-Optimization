@@ -23,3 +23,15 @@ target_include_directories(test_elementwise PRIVATE
 
 # Enable separable compilation for CUDA translation units
 set_target_properties(test_elementwise PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+# Reduction test binary
+add_executable(test_reduction
+    tests/test_reduction.cu
+    src/reduce/reduce_sum.cu
+)
+
+target_include_directories(test_reduction PRIVATE
+    src/reduce
+)
+
+# Enable separable compilation for reduction kernels
+set_target_properties(test_reduction PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
