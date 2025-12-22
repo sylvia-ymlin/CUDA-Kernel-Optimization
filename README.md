@@ -1,11 +1,11 @@
 # CUDA Kernel Optimization
 
-High-performance CUDA kernel implementations demonstrating systematic GPU optimization techniques. Achieves **82% of cuBLAS** for SGEMM and **91% of peak bandwidth** for memory-bound kernels through progressive optimization.
+High-performance CUDA kernel implementations demonstrating systematic GPU optimization techniques. Achieves **82% of cuBLAS** for SGEMM and **91% of peak bandwidth** for memory-bound kernels.
 
 ## Scope
 
 **Focus:** FP32 CUDA C++ kernel optimization on Tesla T4  
-**Intentionally excluded:** Tensor Cores (WMMA), FP16/BF16, PTX assembly, autotuning
+**Excluded:** Tensor Cores, FP16/BF16, PTX assembly, autotuning
 
 | Exclusion | Rationale |
 |-----------|-----------|
@@ -35,41 +35,16 @@ High-performance CUDA kernel implementations demonstrating systematic GPU optimi
 
 ---
 
-# GPU Fundamentals
+# Memory Hierarchy & Roofline
 
 ![Memory Hierarchy](figures/memory_hierarchy.png)
 
-- **Memory hierarchy:** Registers (~8 TB/s) → Shared/L1 (~12 TB/s) → L2 (~3 TB/s) → Global (320 GB/s)
-- **Execution:** Warps of 32 threads execute in lockstep; divergence serializes execution
-- **Optimization goal:** Maximize data reuse in faster memory tiers
-
----
-
-# Kernel Implementations
-
-## Foundational Kernels
-
-| Kernel | Technique | Result |
-|--------|-----------|--------|
-| Elementwise | float4 vectorization | 79% peak BW |
-| Reduction | Warp shuffle + float4 | 91% peak BW |
-| Transpose | Shared memory + padding | 62% peak BW |
-
-**Kernel Fusion:** In production, fuse operations (e.g., `sigmoid(x + bias)`) into single kernels to eliminate intermediate DRAM traffic.
-
-## SGEMM Case Study
-
-Progressive optimization from naive (7% cuBLAS) to optimized (82% cuBLAS):
-
-![SGEMM Tiling](figures/sgemm_tiling.png)
-
-*Block tiling → Thread tiling → Register accumulation with outer products*
-
----
-
-# Performance Results
-
-## Roofline Analysis
+| Level | Bandwidth | Latency |
+|-------|-----------|---------|
+| Registers | ~8 TB/s | 1 cycle |
+| Shared/L1 | ~12 TB/s | ~20 cycles |
+| L2 Cache | ~3 TB/s | ~200 cycles |
+| Global (DRAM) | 320 GB/s | ~400 cycles |
 
 ![Roofline Model](figures/roofline_model.png)
 
@@ -80,17 +55,41 @@ Progressive optimization from naive (7% cuBLAS) to optimized (82% cuBLAS):
 | Transpose | 0 FLOP/byte | Memory | Bandwidth |
 | SGEMM | ~170 FLOP/byte | Compute | FLOPS |
 
+---
+
+# Kernel Implementations
+
+## Foundational Kernels
+
+| Kernel | Technique | % Peak BW |
+|--------|-----------|-----------|
+| Elementwise | float4 vectorization | 79% |
+| Reduction | Warp shuffle + float4 | 91% |
+| Transpose | Shared memory + padding | 62% |
+
+## SGEMM
+
+Progressive optimization from naive (7% cuBLAS) to optimized (82% cuBLAS):
+
+![SGEMM Tiling](figures/sgemm_tiling.png)
+
+*Block tiling → Thread tiling → Register accumulation*
+
+---
+
+# Performance Results
+
 ## Summary
 
-| Kernel | Achieved | Ceiling | Efficiency |
-|--------|----------|---------|------------|
+| Kernel | Achieved | Ceiling | % Peak |
+|--------|----------|---------|--------|
 | Elementwise | 252 GB/s | ~280 GB/s | **79%** |
 | Reduction | 290 GB/s | ~300 GB/s | **91%** |
 | Transpose | 199 GB/s | ~250 GB/s | **62%** |
 | SGEMM v7 | 4,209 GFLOPS | 6,523 (cuBLAS) | **65%** |
 
 ```
-Bandwidth Efficiency (% of 320 GB/s)
+% of Peak Bandwidth (320 GB/s)
 
 Reduction v5  ████████████████████████████████████████████████░░  91%
 Elementwise   ███████████████████████████████████████░░░░░░░░░░░  79%
@@ -102,8 +101,8 @@ Transpose v4  ██████████████████████
 
 ## Elementwise (32M elements)
 
-| Kernel | Time (ms) | Bandwidth | Efficiency |
-|--------|-----------|-----------|------------|
+| Kernel | Time (ms) | Bandwidth | % Peak |
+|--------|-----------|-----------|--------|
 | ADD (float4) | 1.597 | 252.1 GB/s | **78.8%** |
 | SIGMOID | 1.113 | 241.3 GB/s | 75.4% |
 | RELU | 1.149 | 233.6 GB/s | 73.0% |
@@ -144,8 +143,8 @@ v5 (float4+shfl)    ████████████████████
 
 ![Bank Conflicts](figures/bank_conflicts.png)
 
-32×32 shared memory tile → 32-way bank conflict on column access  
-**Fix:** Pad to 32×33 → conflicts eliminated → **30% improvement**
+32×32 tile → 32-way bank conflict on column read  
+**Fix:** Pad to 32×33 → **30% improvement**
 
 ---
 
@@ -175,23 +174,23 @@ v7 (dbl buf)  ██████████████████████
 cuBLAS        █████████████████████████████████████████████████░░░░░░░░  6,523
 ```
 
-### Occupancy vs ILP Tradeoff
+### Occupancy vs ILP
 
 ![Occupancy vs ILP](figures/occupancy_ilp.png)
 
-v6/v7 use ~128 registers/thread for 8×8 output tiles. Occupancy drops to ~25%, but register reuse eliminates shared memory bottleneck → **2.7x improvement** (v5→v6).
+v6/v7: ~128 registers/thread, 25% occupancy → register reuse removes shared memory bottleneck → **2.7x gain**
 
 ### Scalability
 
-| Size | v7 GFLOPS | cuBLAS | Ratio |
-|------|-----------|--------|-------|
+| Size | v7 GFLOPS | cuBLAS | % cuBLAS |
+|------|-----------|--------|----------|
 | 512³ | 2,759 | 5,448 | 51% |
 | 1024³ | 4,249 | 6,587 | 65% |
 | 2048³ | 4,458 | 5,954 | 75% |
 | 4096³ | **4,719** | 5,729 | **82%** |
 
 ```
-v7/cuBLAS ratio
+% cuBLAS vs matrix size
 
 100% ┤
  90% ┤                                        ●──── 82%
@@ -205,32 +204,15 @@ v7/cuBLAS ratio
 
 ### Gap to cuBLAS (18%)
 
-The remaining performance gap requires:
-- `cp.async` software pipelining (Ampere+)
-- PTX/SASS instruction scheduling
-- Per-GPU autotuning
-- Warp specialization
-
-Reaching 75-85% of cuBLAS with pure CUDA C++ represents near-optimal hand-written performance.
+Remaining gap requires: `cp.async` pipelining, PTX scheduling, autotuning, warp specialization.
 
 ---
 
 # Key Findings
 
-1. **Memory-bound ceiling:** Elementwise/reduction/transpose limited by 320 GB/s DRAM. At 75-90% efficiency, further thread tuning yields diminishing returns.
-
-2. **Register tiling is critical:** SGEMM v5→v6 gained 2.7x from register-level data reuse. Occupancy matters less than ILP for compute-bound kernels.
-
-3. **Core optimization patterns:**
-   - float4 vectorization (4x fewer transactions)
-   - Warp shuffle (eliminates shared memory sync)
-   - Shared memory tiling (coalesced access)
-   - Double buffering (latency hiding)
-
-4. **Edge cases:**
-   - Launch overhead (~2μs) dominates for <10K elements
-   - L2 cache inflates bandwidth for <1M element working sets
-   - Non-power-of-two: ~1% cost for transpose, ~22% for SGEMM
+1. **Memory-bound kernels** hit 75–90% peak bandwidth; further tuning yields diminishing returns.
+2. **Compute-bound SGEMM** gains 2.7x from register tiling (v5→v6).
+3. **Edge cases:** Launch overhead dominates <10K elements; L2 inflates bandwidth <1M elements.
 
 ---
 
@@ -248,8 +230,6 @@ cuda-kernels-from-scratch/
 ├── figures/             # Generated diagrams
 └── CMakeLists.txt
 ```
-
----
 
 # Build & Run
 
