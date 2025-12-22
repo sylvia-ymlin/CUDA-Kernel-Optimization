@@ -29,7 +29,7 @@ __global__ void max_kernel(float* input, float* output, int N){
    int laneId = threadIdx.x % warpSize; // the idx in the warp
 
    float val = (idx < N) ? input[idx] : -FLT_MAX; // store the value in register
-   #parama unroll
+   #pragma unroll
    for(int offset = warpSize; offset > 0; offset >>= 1){
       val = fmaxf(val, __shfl_down_sync(0xffffffff, val, offset));
    }
