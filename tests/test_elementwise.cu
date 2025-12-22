@@ -115,10 +115,152 @@ void test_relu() {
     std::printf("relu: PASS\n");
 }
 
+void perf_elementwise_add() {
+    constexpr int n = 32 * 1024 * 1024;  // 32M elements
+    constexpr int n4 = (n / 4) * 4;
+    constexpr int warmup = 3;
+    constexpr int iters = 100;
+
+    float *dA, *dB, *dC;
+    cudaCheck(cudaMalloc(&dA, n * sizeof(float)));
+    cudaCheck(cudaMalloc(&dB, n * sizeof(float)));
+    cudaCheck(cudaMalloc(&dC, n * sizeof(float)));
+
+    dim3 block(256);
+    dim3 grid_vec(CEIL_DIV(n4 / 4, block.x));
+    dim3 grid_tail(CEIL_DIV(n - n4, block.x));
+
+    // Warmup
+    for (int i = 0; i < warmup; ++i) {
+        if (n4 > 0) elementwise_add_float4<<<grid_vec, block>>>(dA, dB, dC, n4);
+        if (n > n4) elementwise_add_scalar<<<grid_tail, block>>>(dA, dB, dC, n, n4);
+    }
+    cudaCheck(cudaDeviceSynchronize());
+
+    // Timing
+    cudaEvent_t start, stop;
+    cudaCheck(cudaEventCreate(&start));
+    cudaCheck(cudaEventCreate(&stop));
+
+    cudaCheck(cudaEventRecord(start));
+    for (int i = 0; i < iters; ++i) {
+        if (n4 > 0) elementwise_add_float4<<<grid_vec, block>>>(dA, dB, dC, n4);
+        if (n > n4) elementwise_add_scalar<<<grid_tail, block>>>(dA, dB, dC, n, n4);
+    }
+    cudaCheck(cudaEventRecord(stop));
+    cudaCheck(cudaEventSynchronize(stop));
+
+    float ms;
+    cudaCheck(cudaEventElapsedTime(&ms, start, stop));
+    float avg_ms = ms / iters;
+    float bandwidth_gb = (3.0f * n * sizeof(float)) / (avg_ms * 1e6); // 2 reads + 1 write
+
+    std::printf("elementwise_add performance: %.3f ms/iter, %.2f GB/s\n", avg_ms, bandwidth_gb);
+
+    cudaCheck(cudaEventDestroy(start));
+    cudaCheck(cudaEventDestroy(stop));
+    cudaCheck(cudaFree(dA)); cudaCheck(cudaFree(dB)); cudaCheck(cudaFree(dC));
+}
+
+void perf_sigmoid() {
+    constexpr int n4 = 32 * 1024 * 1024;  // 32M elements
+    constexpr int warmup = 3;
+    constexpr int iters = 100;
+
+    float *dX, *dY;
+    cudaCheck(cudaMalloc(&dX, n4 * sizeof(float)));
+    cudaCheck(cudaMalloc(&dY, n4 * sizeof(float)));
+
+    dim3 block(256);
+    dim3 grid(CEIL_DIV(n4 / 4, block.x));
+
+    // Warmup
+    for (int i = 0; i < warmup; ++i) {
+        sigmoid_float4<<<grid, block>>>(reinterpret_cast<const float4*>(dX),
+                                        reinterpret_cast<float4*>(dY), n4);
+    }
+    cudaCheck(cudaDeviceSynchronize());
+
+    // Timing
+    cudaEvent_t start, stop;
+    cudaCheck(cudaEventCreate(&start));
+    cudaCheck(cudaEventCreate(&stop));
+
+    cudaCheck(cudaEventRecord(start));
+    for (int i = 0; i < iters; ++i) {
+        sigmoid_float4<<<grid, block>>>(reinterpret_cast<const float4*>(dX),
+                                        reinterpret_cast<float4*>(dY), n4);
+    }
+    cudaCheck(cudaEventRecord(stop));
+    cudaCheck(cudaEventSynchronize(stop));
+
+    float ms;
+    cudaCheck(cudaEventElapsedTime(&ms, start, stop));
+    float avg_ms = ms / iters;
+    float bandwidth_gb = (2.0f * n4 * sizeof(float)) / (avg_ms * 1e6); // 1 read + 1 write
+
+    std::printf("sigmoid performance: %.3f ms/iter, %.2f GB/s\n", avg_ms, bandwidth_gb);
+
+    cudaCheck(cudaEventDestroy(start));
+    cudaCheck(cudaEventDestroy(stop));
+    cudaCheck(cudaFree(dX)); cudaCheck(cudaFree(dY));
+}
+
+void perf_relu() {
+    constexpr int n4 = 32 * 1024 * 1024;  // 32M elements
+    constexpr int warmup = 3;
+    constexpr int iters = 100;
+
+    float *dX, *dY;
+    cudaCheck(cudaMalloc(&dX, n4 * sizeof(float)));
+    cudaCheck(cudaMalloc(&dY, n4 * sizeof(float)));
+
+    dim3 block(256);
+    dim3 grid(CEIL_DIV(n4 / 4, block.x));
+
+    // Warmup
+    for (int i = 0; i < warmup; ++i) {
+        relu_float4<<<grid, block>>>(reinterpret_cast<const float4*>(dX),
+                                     reinterpret_cast<float4*>(dY), n4);
+    }
+    cudaCheck(cudaDeviceSynchronize());
+
+    // Timing
+    cudaEvent_t start, stop;
+    cudaCheck(cudaEventCreate(&start));
+    cudaCheck(cudaEventCreate(&stop));
+
+    cudaCheck(cudaEventRecord(start));
+    for (int i = 0; i < iters; ++i) {
+        relu_float4<<<grid, block>>>(reinterpret_cast<const float4*>(dX),
+                                     reinterpret_cast<float4*>(dY), n4);
+    }
+    cudaCheck(cudaEventRecord(stop));
+    cudaCheck(cudaEventSynchronize(stop));
+
+    float ms;
+    cudaCheck(cudaEventElapsedTime(&ms, start, stop));
+    float avg_ms = ms / iters;
+    float bandwidth_gb = (2.0f * n4 * sizeof(float)) / (avg_ms * 1e6); // 1 read + 1 write
+
+    std::printf("relu performance: %.3f ms/iter, %.2f GB/s\n", avg_ms, bandwidth_gb);
+
+    cudaCheck(cudaEventDestroy(start));
+    cudaCheck(cudaEventDestroy(stop));
+    cudaCheck(cudaFree(dX)); cudaCheck(cudaFree(dY));
+}
+
 int main() {
+    std::printf("=== Correctness Tests ===\n");
     test_elementwise_add();
     test_sigmoid();
     test_relu();
-    std::printf("All elementwise tests passed.\n");
+    std::printf("All elementwise tests passed.\n\n");
+
+    std::printf("=== Performance Tests ===\n");
+    perf_elementwise_add();
+    perf_sigmoid();
+    perf_relu();
+
     return 0;
 }
