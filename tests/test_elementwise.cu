@@ -3,7 +3,7 @@
 #include <cstdlib>
 #include <cmath>
 
-#include "../src/elementwise/add.cuh"
+#include "../src/elementwise/elementwise.cuh"
 
 #define CEIL_DIV(a, b) (((a) + (b) - 1) / (b))
 #define cudaCheck(err) _cudaCheck((err), __FILE__, __LINE__)

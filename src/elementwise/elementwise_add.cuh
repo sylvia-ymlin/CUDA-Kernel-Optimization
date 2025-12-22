@@ -11,6 +11,3 @@ __global__ void elementwise_add_scalar(const float* A,
                                        float* C,
                                        int n,
                                        int offset);
-
-__global__ void sigmoid_float4(const float4* X, float4* Y, int n4);
-__global__ void relu_float4(const float4* X, float4* Y, int n4);
