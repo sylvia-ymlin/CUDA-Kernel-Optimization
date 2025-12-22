@@ -34,5 +34,8 @@ target_include_directories(test_reduction PRIVATE
     src/reduce
 )
 
-# Enable separable compilation for reduction kernels
-set_target_properties(test_reduction PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+# Enable separable compilation and device symbol resolution
+set_target_properties(test_reduction PROPERTIES 
+    CUDA_SEPARABLE_COMPILATION ON
+    CUDA_RESOLVE_DEVICE_SYMBOLS ON
+)
