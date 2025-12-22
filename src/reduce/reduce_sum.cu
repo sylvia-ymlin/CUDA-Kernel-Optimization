@@ -1,7 +1,7 @@
 #include <cuda_runtime.h>
 
 #define CEIL(a, b) (((a) + (b) - 1) / (b))
-#define FLOAT4(a) *(reinterpret_cast<float4 *>(&(a)))
+#define FLOAT4(a) *(reinterpret_cast<const float4 *>(&(a)))
 
 // Naive single-block reduction; used for quick sanity tests
 __global__ void sum_v0(float *X, float *Y) {
