@@ -1,14 +1,10 @@
 // 使用 warp_shuffle 实现
 // AtomicMax 不支持 float 类型，需要手动实现
 
-#include<cuda_runtime.h>
-#include<stdio.h>
-#include<stdlib.h>
-#include<float.h>
+#include <cuda_runtime.h>
+#include <cfloat>
 
-void max_cpu(float* input, float* output, int n){
-   *output = *(std::max_element(input, input + n));
-}
+
 
 __device__ static float atomicMax(float* address, float val){
    int* address_as_i = (int*)address;
@@ -47,36 +43,3 @@ __global__ void max_kernel(float* input, float* output, int N){
       if(laneId == 0) atomicMax(output, val);
    }
 }
-
-
-int main(){
-   size_t N = 100000000;
-   constexpr size_t BLOCK_SIZE = 128;
-   const int repeat_times = 10;
-
-   float* input = (float*) malloc (N * sizeof(float));
-   for(int i=N; i>=0; i--){
-      input[i] = i;
-   }
-   float* ref_output = (float*) malloc (sizeof(float));
-   float total_time_h = TIME_RECORD(repeat_times, ([&]{max_cpu(input, ref_output, N);}));
-   printf("[max_cpu]: total_time_h = %f ms\n", total_time_h / repeat_times);
-
-   // max
-   float* h_output = (float*) malloc (sizeof(float));
-   float* d_input, *d_output;
-   cudaMalloc((void**)&d_input, N * sizeof(float));
-   cudaMalloc((void**)&d_output, sizeof(float));
-   cudaMemcpy(d_input, input, N * sizeof(float), cudaMemcpyHostToDevice);
-   float total_time_1 = TIME_RECORD(repeat_times, ([&]{max_kernel<<<grid_size, block_size>>>(d_input, d_output, N);}));
-   printf("[max_kernel]: total_time_1 = %f ms\n", total_time_1 / repeat_times);
-   cudaMemcpy(h_output, d_output, sizeof(float), cudaMemcpyDeviceToHost);
-   
-   cudaFree(d_input);
-   cudaFree(d_output);
-   free(h_output);
-   free(input);
-   free(output);
-   return 0;
-}
-
