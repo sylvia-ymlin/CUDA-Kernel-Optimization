@@ -9,7 +9,7 @@
 
 ## Roofline Context
 
-The **roofline model** helps classify kernels:
+The **roofline model** classifies kernels by their bottleneck:
 - **Memory-bound:** Performance limited by data movement. Arithmetic intensity < ~25 FLOP/byte on T4.
 - **Compute-bound:** Performance limited by ALU throughput. Arithmetic intensity > ~25 FLOP/byte.
 
@@ -28,23 +28,24 @@ The **roofline model** helps classify kernels:
 
 | Kernel | Time (ms) | Bandwidth (GB/s) | Efficiency |
 |--------|-----------|------------------|------------|
-| ADD (float4) | 1.60 | 251.5 | **78.6%** |
-| SIGMOID (float4) | 1.12 | 239.6 | 74.9% |
-| RELU (float4) | 1.14 | 236.2 | 73.8% |
+| ADD (float4) | 1.597 | 252.1 | **78.8%** |
+| SIGMOID (float4) | 1.113 | 241.3 | 75.4% |
+| RELU (float4) | 1.149 | 233.6 | 73.0% |
 
 **Analysis:**  
-These kernels are **firmly memory-bound**. At 75-79% of peak bandwidth, we're near the practical ceiling. Further optimizations (more unrolling, different grid sizes) would yield <5% gains. The limiting factor is DRAM bandwidth, not compute.
+These kernels are **firmly memory-bound**. At 73-79% of peak bandwidth, we're near the practical ceiling. Further optimizations (more unrolling, different grid sizes) would yield <5% gains. The limiting factor is DRAM bandwidth, not compute.
 
-**Why ~80% and not 100%?**
+**Why ~78% and not 100%?**
 - ECC overhead on T4 (~6%)
 - TLB misses and page table walks
 - Memory controller scheduling inefficiency
 
-**Edge case - small sizes:**
+**Edge case - small sizes (L2 cache effects):**
 | Size | Time (ms) | BW (GB/s) | Note |
 |------|-----------|-----------|------|
-| 1K | 0.0025 | 4.8 | Kernel launch overhead dominates (~2μs) |
-| 64K | 0.0026 | 306 | Apparent BW > peak = L2 cache hits |
+| 1K | 0.0024 | 5.2 | Kernel launch overhead dominates (~2μs) |
+| 64K | 0.0023 | 335 | Apparent BW > peak = L2 cache hits |
+| 1M | 0.054 | 233 | Working set exceeds L2, DRAM-bound |
 
 *The >100% "bandwidth" at 64K elements is not real—data fits in L2 cache (256KB < 4MB).*
 
@@ -56,10 +57,10 @@ These kernels are **firmly memory-bound**. At 75-79% of peak bandwidth, we're ne
 
 | Version | Intent | Time (ms) | BW (GB/s) | Speedup |
 |---------|--------|-----------|-----------|---------|
-| v2 | Baseline shared memory | 2.41 | 55.8 | 1.0x |
-| v3 | Show atomic contention cost | 1.28 | 105.0 | 1.9x |
-| v4 | Warp-synchronous programming | 1.22 | 110.4 | 2.0x |
-| **v5** | **Vectorization + shuffle wins** | **0.46** | **289.8** | **5.2x** |
+| v2 | Baseline shared memory | 2.39 | 56.1 | 1.0x |
+| v3 | Show atomic contention cost | 1.27 | 105.8 | 1.9x |
+| v4 | Warp-synchronous programming | 1.20 | 111.6 | 2.0x |
+| **v5** | **Vectorization + shuffle wins** | **0.46** | **289.7** | **5.2x** |
 
 **Why each version exists:**
 - **v2:** Demonstrates basic shared memory tiling—the textbook approach
@@ -75,6 +76,16 @@ v5 achieves **90.5% bandwidth efficiency**—essentially at the ceiling for a re
 
 **Further optimization is not worthwhile.** Any new reduction kernel should match v5's pattern.
 
+**Scalability (sum_v5):**
+| Size | Time (ms) | BW (GB/s) | Efficiency |
+|------|-----------|-----------|------------|
+| 64K | 0.003 | 87.3 | 27.3% |
+| 1M | 0.012 | 352.9 | 110%* |
+| 4M | 0.061 | 276.3 | 86.3% |
+| 32M | 0.463 | 289.8 | 90.5% |
+
+*>100% at 1M = L2 cache reuse during multi-pass reduction
+
 ---
 
 ## 3. Softmax (4096×1024 matrix)
@@ -83,12 +94,12 @@ v5 achieves **90.5% bandwidth efficiency**—essentially at the ceiling for a re
 
 | Kernel | Intent | Time (ms) | BW (GB/s) |
 |--------|--------|-----------|-----------|
-| Row-wise (shared) | Coalesced access pattern | 0.35 | 96.1 |
-| Row-wise (shfl_xor) | Butterfly reduction | 0.59 | 57.3 |
-| Column-wise (shfl_xor) | Show strided access penalty | 0.84 | 40.0 |
+| Row-wise (shared) | Coalesced access pattern | 0.352 | 95.2 |
+| Row-wise (shfl_xor) | Butterfly reduction | 0.584 | 57.4 |
+| Column-wise (shfl_xor) | Show strided access penalty | 0.833 | 40.3 |
 
 **Analysis:**  
-Row-wise softmax is **2.4x faster** than column-wise due to memory coalescing. Column-wise access causes 32-byte transactions to fetch only 4 useful bytes—a 8x amplification of memory traffic.
+Row-wise softmax is **2.4x faster** than column-wise due to memory coalescing. Column-wise access causes 32-byte transactions to fetch only 4 useful bytes—an 8x amplification of memory traffic.
 
 **Lesson:** Always prefer row-major iteration for row-major storage.
 
@@ -100,17 +111,17 @@ Row-wise softmax is **2.4x faster** than column-wise due to memory coalescing. C
 
 | Version | Intent | Time (ms) | BW (GB/s) | Speedup |
 |---------|--------|-----------|-----------|---------|
-| v0 | Naive baseline | 1.70 | 79.1 | 1.0x |
-| v1 | Coalesced writes | 1.44 | 93.5 | 1.2x |
-| v2 | `__ldg()` read-only cache | 1.44 | 93.0 | 1.2x |
-| v3 | Shared memory tiling | 0.88 | 152.7 | 1.9x |
-| **v4** | **Padding for bank conflicts** | **0.67** | **198.9** | **2.5x** |
-| v5 | Swizzling (alternative) | 0.67 | 199.0 | 2.5x |
+| v0 | Naive baseline | 1.91 | 70.3 | 1.0x |
+| v1 | Coalesced writes | 1.81 | 74.2 | 1.1x |
+| v2 | `__ldg()` read-only cache | 1.43 | 94.1 | 1.3x |
+| v3 | Shared memory tiling | 0.88 | 152.0 | 2.2x |
+| **v4** | **Padding for bank conflicts** | **0.68** | **198.8** | **2.8x** |
+| v5 | Swizzling (alternative) | 0.68 | 198.8 | 2.8x |
 
 **Why each version exists:**
 - **v0:** Shows the cost of uncoalesced writes (strided by N)
 - **v1:** Coalesced writes via transposed output indexing
-- **v2:** Tests whether `__ldg()` helps (it doesn't—already cached)
+- **v2:** Tests whether `__ldg()` helps (modest improvement)
 - **v3:** Shared memory converts strided reads to coalesced reads—but has bank conflicts
 - **v4:** +1 padding eliminates 32-way bank conflicts (1.3x over v3)
 - **v5:** XOR swizzling—same effect as padding, slightly less memory
@@ -118,7 +129,13 @@ Row-wise softmax is **2.4x faster** than column-wise due to memory coalescing. C
 **Analysis:**  
 At **62% of peak bandwidth**, transpose is limited by the fundamental read-write asymmetry: we must either read strided or write strided. Shared memory tiling minimizes this penalty but can't eliminate it.
 
-**Theoretical ceiling:** ~250 GB/s (read + write with some overlap). We're at 80% of that.
+**Edge case - non-square matrices:**
+| Matrix | Time (ms) | BW (GB/s) | Note |
+|--------|-----------|-----------|------|
+| 4096×1024 | 0.153 | 219.9 | Reference |
+| 4096×1023 | 0.153 | 218.7 | **Only 0.5% slower** |
+
+Non-power-of-two dimensions cause minimal overhead due to proper bounds checking.
 
 ---
 
@@ -128,14 +145,14 @@ At **62% of peak bandwidth**, transpose is limited by the fundamental read-write
 
 | Version | Intent | Time (ms) | GFLOPS | % cuBLAS |
 |---------|--------|-----------|--------|----------|
-| naive | Baseline (2 loads/FLOP) | 6.20 | 347 | 5% |
-| v2 | Shared memory tiling | 3.28 | 655 | 10% |
-| v3 | 1D thread tiling (TM) | 1.57 | 1,365 | 21% |
-| v4 | 2D thread tiling (TM×TN) | 1.25 | 1,718 | 26% |
-| v5 | Register caching (a_frag, b_frag) | 1.25 | 1,719 | 26% |
+| naive | Baseline (2 loads/FLOP) | 4.74 | 453 | 7% |
+| v2 | Shared memory tiling | 3.34 | 643 | 10% |
+| v3 | 1D thread tiling (TM) | 1.94 | 1,109 | 17% |
+| v4 | 2D thread tiling (TM×TN) | 1.52 | 1,408 | 22% |
+| v5 | Register caching (a_frag, b_frag) | 1.45 | 1,477 | 23% |
 | v6 | Vectorized float4 loads | 0.53 | 4,052 | 62% |
-| **v7** | **Double buffering** | **0.51** | **4,209** | **64%** |
-| cuBLAS | Reference (tensor cores?) | 0.33 | 6,532 | 100% |
+| **v7** | **Double buffering** | **0.51** | **4,209** | **65%** |
+| cuBLAS | Reference (tensor cores?) | 0.33 | 6,523 | 100% |
 
 **Why each version exists:**
 - **naive:** Shows the memory wall—2K memory ops per output element
@@ -147,82 +164,48 @@ At **62% of peak bandwidth**, transpose is limited by the fundamental read-write
 - **v7:** Double buffering overlaps global→shared loads with compute
 
 **Analysis:**  
-At **4,209 GFLOPS (52% of theoretical peak)**, v7 is a respectable handwritten kernel. The gap to cuBLAS comes from:
+At **4,209 GFLOPS (52% of theoretical peak, 65% of cuBLAS)**, v7 is a respectable handwritten kernel. The gap to cuBLAS comes from:
 
-1. **No tensor cores:** cuBLAS uses WMMA on T4 for ~2x throughput
-2. **Suboptimal occupancy:** v6/v7 use ~100 registers/thread, limiting to ~25% occupancy
+1. **No tensor cores:** cuBLAS likely uses WMMA on T4 for ~2x throughput
+2. **Suboptimal occupancy:** v6/v7 use ~100 registers/thread, limiting occupancy
 3. **No async copy:** `cp.async` can further overlap memory with compute
 4. **Tuning:** cuBLAS auto-tunes tile sizes per GPU
 
-**The 64% ceiling is architectural, not algorithmic.** Reaching >80% requires tensor cores or assembly-level tuning.
-
 **Scalability:**
-| Size | v5 GFLOPS | v7 GFLOPS | cuBLAS |
-|------|-----------|-----------|--------|
-| 256³ | 264 | ~500 | 1,737 |
-| 1024³ | 1,719 | 4,209 | 6,532 |
-| 4096³ | 1,926 | ~4,200 | 5,664 |
+| Size | v2 GFLOPS | v5 GFLOPS | v7 GFLOPS | cuBLAS |
+|------|-----------|-----------|-----------|--------|
+| 256³ | 652 | 265 | N/A* | 1,752 |
+| 512³ | 777 | 948 | 2,759 | 5,448 |
+| 1024³ | 808 | 1,759 | 4,249 | 6,587 |
+| 2048³ | 800 | 1,911 | 4,458 | 5,954 |
+| 4096³ | 791 | 1,941 | **4,719** | 5,729 |
 
-*Small matrices underutilize the GPU. SGEMM efficiency improves with size until compute saturates.*
+*v7 requires 128×128 tiles, too large for 256³
 
----
+**Key insight:** v7 reaches **82% of cuBLAS at 4096³**—the gap narrows with larger matrices as overhead becomes negligible.
 
-## 6. Edge Cases & Robustness
+**Edge case - non-power-of-two (1000×1000×1000):**
+| Kernel | GFLOPS | Time (ms) | vs 1024³ |
+|--------|--------|-----------|----------|
+| v5 | 1,342 | 1.49 | **78%** efficiency |
+| cuBLAS | 5,819 | 0.34 | 88% efficiency |
 
-### Kernel Launch Overhead
-| Size | Kernel | Time (μs) | Note |
-|------|--------|-----------|------|
-| 1K | elementwise | 2.5 | Launch overhead dominates |
-| 1K | reduction | 2.7 | Same pattern |
-
-**Insight:** For <10K elements, kernel launch (~2μs) exceeds compute time. Consider CPU fallback or batching.
-
-### Non-Power-of-Two Sizes
-All kernels handle arbitrary sizes via bounds checking. Performance is stable—no special cases needed.
-
-### Non-Square Transpose
-4096×1023 vs 4096×1024: ~3% slower due to partial tiles. Acceptable.
-
-### Odd SGEMM Dimensions
-1000×1000×1000: Works correctly (bounds checking). ~5% slower than 1024³ due to tile waste.
+Non-power-of-two dimensions hurt v5 more than cuBLAS due to partial tile waste.
 
 ---
 
-## 7. Resource Utilization (Nsight Compute Data Needed)
-
-**To fully characterize v6/v7 SGEMM, measure:**
-
-```bash
-ncu --set full -o sgemm_detailed ./build/test_sgemm
-```
-
-Key metrics to extract:
-| Metric | Why It Matters |
-|--------|----------------|
-| Registers/thread | >64 hurts occupancy |
-| Achieved occupancy | Actual vs theoretical |
-| SM throughput | Compute saturation |
-| Memory throughput | Bandwidth utilization |
-| Warp stall reasons | Pipeline bottlenecks |
-
-**Experiment:** Try `--maxrregcount=64` to trade occupancy for register spilling. If performance improves, we're occupancy-limited.
-
----
-
-## Summary
+## 6. Summary
 
 | Kernel | Classification | Achieved | Ceiling | Status |
 |--------|---------------|----------|---------|--------|
-| Elementwise | Memory-bound | 78% BW | ~85% | ✅ Near optimal |
-| Reduction | Memory-bound | 91% BW | ~95% | ✅ **Optimal** |
-| Transpose | Memory-bound | 62% BW | ~80% | ✅ Good |
-| SGEMM | Compute-bound | 52% FLOPS | ~80%* | 🔶 Room to grow |
-
-*\*Without tensor cores*
+| Elementwise | Memory-bound | 252 GB/s (79%) | ~280 GB/s | ✅ Near optimal |
+| Reduction | Memory-bound | 290 GB/s (91%) | ~300 GB/s | ✅ **Optimal** |
+| Transpose | Memory-bound | 199 GB/s (62%) | ~250 GB/s | ✅ Good |
+| SGEMM | Compute-bound | 4,209 GFLOPS (52%) | ~6,500 GFLOPS | 🔶 Room to grow |
 
 ---
 
-## Key Learnings
+## 7. Key Learnings
 
 1. **Memory-bound kernels (elementwise, reduction, transpose):**
    - Optimize for bandwidth: coalescing, vectorization, cache utilization
@@ -240,15 +223,20 @@ Key metrics to extract:
    - Shared memory tiling for inter-warp data reuse
    - Double buffering to hide latency
 
+4. **Edge cases:**
+   - Kernel launch overhead dominates for <10K elements
+   - L2 cache causes artificially high bandwidth for <1M elements
+   - Non-power-of-two dimensions: ~1% overhead for transpose, ~22% for SGEMM
+
 ---
 
-## Next Steps
+## 8. Next Steps
 
 To push beyond current results:
 1. **SGEMM:** Implement WMMA tensor core path (potential 2x)
 2. **All kernels:** FP16/BF16 variants (2x throughput, 2x bandwidth)
 3. **Reduction:** Multi-pass for >4B elements
-4. **Profiling:** Detailed Nsight Compute analysis for v6/v7
+4. **Profiling:** Detailed Nsight Compute analysis for register pressure
 
 ---
 
