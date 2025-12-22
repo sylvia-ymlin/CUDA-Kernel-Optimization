@@ -31,8 +31,8 @@ __global__ void sgemm_v6(int M, int N, int K,
 
     // Vectorized loading parameters
     // Each thread loads 4 floats at a time
-    const int ldg_a_num = BK * BM / thread_num / 4;
-    const int ldg_b_num = BK * BN / thread_num / 4;
+    constexpr int ldg_a_num = BK * BM / ((BN / TN) * (BM / TM)) / 4;
+    constexpr int ldg_b_num = BK * BN / ((BN / TN) * (BM / TM)) / 4;
 
     int a_tile_row = threadIdx.x / (BK / 4);
     int a_tile_col = (threadIdx.x % (BK / 4)) * 4;
