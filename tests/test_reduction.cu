@@ -44,6 +44,30 @@ float cpu_reduce_max(const float* X, int n) {
     return max_val;
 }
 
+void cpu_softmax(const float* input, float* output, int N) {
+    float max_val = input[0];
+    for (int i = 1; i < N; ++i) {
+        if (input[i] > max_val) max_val = input[i];
+    }
+    float sum = 0.0f;
+    for (int i = 0; i < N; ++i) {
+        sum += std::exp(input[i] - max_val);
+    }
+    for (int i = 0; i < N; ++i) {
+        output[i] = std::exp(input[i] - max_val) / sum;
+    }
+}
+
+void cpu_softmax_row(const float* input, float* output, int M, int N) {
+    for (int row = 0; row < M; ++row) {
+        cpu_softmax(input + row * N, output + row * N, N);
+    }
+}
+
+bool close_enough(float a, float b, float tol = 1e-5f) {
+    return std::fabs(a - b) <= tol * (1.0f + std::fabs(b));
+}
+
 void print_device_info() {
     int device;
     cudaGetDevice(&device);
@@ -215,6 +239,172 @@ void test_max_kernel() {
     cudaCheck(cudaFree(d_in));
     cudaCheck(cudaFree(d_out));
     free(h_in);
+}
+
+// GPU Softmax helper (3-pass: max, sum, normalize)
+void gpu_softmax_3pass(float* d_input, float* d_output, float* d_max, float* d_sum, int N, int block_size) {
+    int grid_size = CEIL_DIV(N, block_size);
+    
+    // Initialize max to -FLT_MAX and sum to 0
+    float neg_max = -FLT_MAX;
+    cudaCheck(cudaMemcpy(d_max, &neg_max, sizeof(float), cudaMemcpyHostToDevice));
+    cudaCheck(cudaMemset(d_sum, 0, sizeof(float)));
+    
+    // Find max
+    max_kernel<<<grid_size, block_size>>>(d_input, d_max, N);
+    cudaCheck(cudaGetLastError());
+    
+    // Compute sum of exp(x - max)
+    sum_kernel<<<grid_size, block_size>>>(d_input, d_sum, d_max, N);
+    cudaCheck(cudaGetLastError());
+    
+    // Normalize
+    softmax_kernel<<<grid_size, block_size>>>(d_input, d_output, d_sum, d_max, N);
+    cudaCheck(cudaGetLastError());
+}
+
+void test_softmax_1d() {
+    std::printf("Testing softmax_1d (3-pass)...\n");
+    
+    constexpr int N = 1024;
+    constexpr int BLOCK = 256;
+    
+    std::vector<float> h_input(N);
+    std::vector<float> h_output_cpu(N);
+    std::vector<float> h_output_gpu(N);
+    
+    for (int i = 0; i < N; ++i) {
+        h_input[i] = static_cast<float>(i - N/2) * 0.01f;
+    }
+    
+    cpu_softmax(h_input.data(), h_output_cpu.data(), N);
+    
+    float *d_input, *d_output, *d_max, *d_sum;
+    cudaCheck(cudaMalloc(&d_input, N * sizeof(float)));
+    cudaCheck(cudaMalloc(&d_output, N * sizeof(float)));
+    cudaCheck(cudaMalloc(&d_max, sizeof(float)));
+    cudaCheck(cudaMalloc(&d_sum, sizeof(float)));
+    cudaCheck(cudaMemcpy(d_input, h_input.data(), N * sizeof(float), cudaMemcpyHostToDevice));
+    
+    gpu_softmax_3pass(d_input, d_output, d_max, d_sum, N, BLOCK);
+    cudaCheck(cudaDeviceSynchronize());
+    
+    cudaCheck(cudaMemcpy(h_output_gpu.data(), d_output, N * sizeof(float), cudaMemcpyDeviceToHost));
+    
+    float max_diff = 0.0f;
+    int fail_count = 0;
+    for (int i = 0; i < N; ++i) {
+        float diff = std::fabs(h_output_gpu[i] - h_output_cpu[i]);
+        max_diff = std::max(max_diff, diff);
+        if (!close_enough(h_output_gpu[i], h_output_cpu[i], 1e-4f)) {
+            fail_count++;
+        }
+    }
+    
+    if (fail_count > 0) {
+        std::printf("softmax_1d FAILED: %d mismatches, max_diff=%e\n", fail_count, max_diff);
+        std::exit(EXIT_FAILURE);
+    }
+    std::printf("softmax_1d: PASS (max_diff=%e)\n", max_diff);
+    
+    cudaCheck(cudaFree(d_input));
+    cudaCheck(cudaFree(d_output));
+    cudaCheck(cudaFree(d_max));
+    cudaCheck(cudaFree(d_sum));
+}
+
+void test_softmax_row() {
+    std::printf("Testing softmax_row_kernel...\n");
+    
+    constexpr int M = 64;
+    constexpr int N = 256;
+    
+    std::vector<float> h_input(M * N);
+    std::vector<float> h_output_cpu(M * N);
+    std::vector<float> h_output_gpu(M * N);
+    
+    for (int i = 0; i < M * N; ++i) {
+        h_input[i] = static_cast<float>((i % N) - N/2) * 0.01f;
+    }
+    
+    cpu_softmax_row(h_input.data(), h_output_cpu.data(), M, N);
+    
+    float *d_input, *d_output;
+    cudaCheck(cudaMalloc(&d_input, M * N * sizeof(float)));
+    cudaCheck(cudaMalloc(&d_output, M * N * sizeof(float)));
+    cudaCheck(cudaMemcpy(d_input, h_input.data(), M * N * sizeof(float), cudaMemcpyHostToDevice));
+    
+    softmax_row_kernel<<<M, N>>>(d_input, d_output, M, N);
+    cudaCheck(cudaGetLastError());
+    cudaCheck(cudaDeviceSynchronize());
+    
+    cudaCheck(cudaMemcpy(h_output_gpu.data(), d_output, M * N * sizeof(float), cudaMemcpyDeviceToHost));
+    
+    float max_diff = 0.0f;
+    int fail_count = 0;
+    for (int i = 0; i < M * N; ++i) {
+        float diff = std::fabs(h_output_gpu[i] - h_output_cpu[i]);
+        max_diff = std::max(max_diff, diff);
+        if (!close_enough(h_output_gpu[i], h_output_cpu[i], 1e-4f)) {
+            fail_count++;
+        }
+    }
+    
+    if (fail_count > 0) {
+        std::printf("softmax_row_kernel FAILED: %d mismatches, max_diff=%e\n", fail_count, max_diff);
+        std::exit(EXIT_FAILURE);
+    }
+    std::printf("softmax_row_kernel: PASS (max_diff=%e)\n", max_diff);
+    
+    cudaCheck(cudaFree(d_input));
+    cudaCheck(cudaFree(d_output));
+}
+
+void test_softmax_row_shfl_xor() {
+    std::printf("Testing softmax_row_kernel_shfl_xor...\n");
+    
+    constexpr int M = 64;
+    constexpr int N = 256;
+    
+    std::vector<float> h_input(M * N);
+    std::vector<float> h_output_cpu(M * N);
+    std::vector<float> h_output_gpu(M * N);
+    
+    for (int i = 0; i < M * N; ++i) {
+        h_input[i] = static_cast<float>((i % N) - N/2) * 0.01f;
+    }
+    
+    cpu_softmax_row(h_input.data(), h_output_cpu.data(), M, N);
+    
+    float *d_input, *d_output;
+    cudaCheck(cudaMalloc(&d_input, M * N * sizeof(float)));
+    cudaCheck(cudaMalloc(&d_output, M * N * sizeof(float)));
+    cudaCheck(cudaMemcpy(d_input, h_input.data(), M * N * sizeof(float), cudaMemcpyHostToDevice));
+    
+    softmax_row_kernel_shfl_xor<<<M, N>>>(d_input, d_output, M, N);
+    cudaCheck(cudaGetLastError());
+    cudaCheck(cudaDeviceSynchronize());
+    
+    cudaCheck(cudaMemcpy(h_output_gpu.data(), d_output, M * N * sizeof(float), cudaMemcpyDeviceToHost));
+    
+    float max_diff = 0.0f;
+    int fail_count = 0;
+    for (int i = 0; i < M * N; ++i) {
+        float diff = std::fabs(h_output_gpu[i] - h_output_cpu[i]);
+        max_diff = std::max(max_diff, diff);
+        if (!close_enough(h_output_gpu[i], h_output_cpu[i], 1e-4f)) {
+            fail_count++;
+        }
+    }
+    
+    if (fail_count > 0) {
+        std::printf("softmax_row_kernel_shfl_xor FAILED: %d mismatches, max_diff=%e\n", fail_count, max_diff);
+        std::exit(EXIT_FAILURE);
+    }
+    std::printf("softmax_row_kernel_shfl_xor: PASS (max_diff=%e)\n", max_diff);
+    
+    cudaCheck(cudaFree(d_input));
+    cudaCheck(cudaFree(d_output));
 }
 
 // ============================================================================
@@ -562,6 +752,120 @@ void perf_cpu_baseline() {
     cpu_ms = std::chrono::duration<double, std::milli>(end - start).count() / 10.0;
     cpu_bw = (N * sizeof(float)) / (cpu_ms * 1e6);
     std::printf("REDUCE_MAX (CPU)     : %.3f ms/iter, %.2f GB/s, max=%.0f\n", cpu_ms, cpu_bw, max_val);
+    
+    // CPU Softmax
+    std::vector<float> h_out(N);
+    start = std::chrono::high_resolution_clock::now();
+    for (int iter = 0; iter < 10; ++iter) {
+        cpu_softmax(h_in.data(), h_out.data(), N);
+    }
+    end = std::chrono::high_resolution_clock::now();
+    cpu_ms = std::chrono::duration<double, std::milli>(end - start).count() / 10.0;
+    cpu_bw = (2.0 * N * sizeof(float)) / (cpu_ms * 1e6);
+    std::printf("SOFTMAX (CPU)        : %.3f ms/iter, %.2f GB/s\n", cpu_ms, cpu_bw);
+}
+
+void perf_softmax_row() {
+    constexpr int M = 4096;
+    constexpr int N = 1024;
+    constexpr int WARMUP = 3;
+    constexpr int ITERS = 100;
+    const int total = M * N;
+    
+    float *d_input, *d_output;
+    cudaCheck(cudaMalloc(&d_input, total * sizeof(float)));
+    cudaCheck(cudaMalloc(&d_output, total * sizeof(float)));
+    
+    std::vector<float> h_input(total);
+    for (int i = 0; i < total; ++i) h_input[i] = static_cast<float>(i % 100) * 0.01f;
+    cudaCheck(cudaMemcpy(d_input, h_input.data(), total * sizeof(float), cudaMemcpyHostToDevice));
+    
+    // Warmup
+    for (int i = 0; i < WARMUP; ++i) {
+        softmax_row_kernel<<<M, N>>>(d_input, d_output, M, N);
+    }
+    cudaCheck(cudaDeviceSynchronize());
+    
+    cudaEvent_t start, stop;
+    cudaCheck(cudaEventCreate(&start));
+    cudaCheck(cudaEventCreate(&stop));
+    
+    cudaCheck(cudaEventRecord(start));
+    for (int i = 0; i < ITERS; ++i) {
+        softmax_row_kernel<<<M, N>>>(d_input, d_output, M, N);
+    }
+    cudaCheck(cudaEventRecord(stop));
+    cudaCheck(cudaEventSynchronize(stop));
+    
+    float ms;
+    cudaCheck(cudaEventElapsedTime(&ms, start, stop));
+    
+    PerfMetrics m;
+    m.avg_ms = ms / ITERS;
+    m.bandwidth_gb = (2.0f * total * sizeof(float)) / (m.avg_ms * 1e6);
+    m.gflops = (3.0f * total / 1e9f) / (m.avg_ms / 1000.0f);
+    m.blocks = M;
+    m.threads_per_block = N;
+    
+    std::printf("%-25s: %.4f ms/iter, %.2f GB/s, %.2f GFLOPS\n", 
+                "softmax_row_kernel", m.avg_ms, m.bandwidth_gb, m.gflops);
+    std::printf("%-25s  Matrix: %d x %d = %d elements\n\n", "", M, N, total);
+    
+    cudaCheck(cudaEventDestroy(start));
+    cudaCheck(cudaEventDestroy(stop));
+    cudaCheck(cudaFree(d_input));
+    cudaCheck(cudaFree(d_output));
+}
+
+void perf_softmax_row_shfl_xor() {
+    constexpr int M = 4096;
+    constexpr int N = 1024;
+    constexpr int WARMUP = 3;
+    constexpr int ITERS = 100;
+    const int total = M * N;
+    
+    float *d_input, *d_output;
+    cudaCheck(cudaMalloc(&d_input, total * sizeof(float)));
+    cudaCheck(cudaMalloc(&d_output, total * sizeof(float)));
+    
+    std::vector<float> h_input(total);
+    for (int i = 0; i < total; ++i) h_input[i] = static_cast<float>(i % 100) * 0.01f;
+    cudaCheck(cudaMemcpy(d_input, h_input.data(), total * sizeof(float), cudaMemcpyHostToDevice));
+    
+    for (int i = 0; i < WARMUP; ++i) {
+        softmax_row_kernel_shfl_xor<<<M, N>>>(d_input, d_output, M, N);
+    }
+    cudaCheck(cudaDeviceSynchronize());
+    
+    cudaEvent_t start, stop;
+    cudaCheck(cudaEventCreate(&start));
+    cudaCheck(cudaEventCreate(&stop));
+    
+    cudaCheck(cudaEventRecord(start));
+    for (int i = 0; i < ITERS; ++i) {
+        softmax_row_kernel_shfl_xor<<<M, N>>>(d_input, d_output, M, N);
+    }
+    cudaCheck(cudaEventRecord(stop));
+    cudaCheck(cudaEventSynchronize(stop));
+    
+    float ms;
+    cudaCheck(cudaEventElapsedTime(&ms, start, stop));
+    
+    PerfMetrics m;
+    m.avg_ms = ms / ITERS;
+    m.bandwidth_gb = (2.0f * total * sizeof(float)) / (m.avg_ms * 1e6);
+    m.gflops = (3.0f * total / 1e9f) / (m.avg_ms / 1000.0f);
+    m.blocks = M;
+    m.threads_per_block = N;
+    
+    std::printf("%-25s: %.4f ms/iter, %.2f GB/s, %.2f GFLOPS\n", 
+                "softmax_row_shfl_xor", m.avg_ms, m.bandwidth_gb, m.gflops);
+    std::printf("%-25s  Matrix: %d x %d = %d elements\n\n", "", M, N, total);
+    
+    cudaCheck(cudaEventDestroy(start));
+    cudaCheck(cudaEventDestroy(stop));
+    cudaCheck(cudaFree(d_input));
+    cudaCheck(cudaFree(d_output));
 }
 
 // ============================================================================
@@ -663,17 +967,26 @@ void perf_comparison_summary() {
 int main() {
     print_device_info();
     
-    std::printf("=== Correctness Tests ===\n");
+    std::printf("=== Correctness Tests (Sum/Max) ===\n");
     test_sum_kernels();
     std::printf("\n");
     test_max_kernel();
+    
+    std::printf("\n=== Correctness Tests (Softmax) ===\n");
+    test_softmax_1d();
+    test_softmax_row();
+    test_softmax_row_shfl_xor();
     std::printf("\nAll reduction correctness tests passed.\n\n");
     
-    std::printf("=== Performance Tests (32M elements) ===\n");
+    std::printf("=== Performance Tests (Sum, 32M elements) ===\n");
     perf_sum_v2();
     perf_sum_v3();
     perf_sum_v4();
     perf_sum_v5();
+    
+    std::printf("=== Performance Tests (Softmax, 4096x1024 matrix) ===\n");
+    perf_softmax_row();
+    perf_softmax_row_shfl_xor();
     
     perf_comparison_summary();
     perf_scalability();

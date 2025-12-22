@@ -23,11 +23,13 @@ target_include_directories(test_elementwise PRIVATE
 
 # Enable separable compilation for CUDA translation units
 set_target_properties(test_elementwise PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
-# Reduction test binary
+# Reduction test binary (includes sum, max, and softmax)
 add_executable(test_reduction
     tests/test_reduction.cu
     src/reduce/reduce_sum.cu
     src/reduce/reduce_max.cu
+    src/reduce/reduce_softmax.cu
+    src/reduce/reduce_softmax_matrix.cu
 )
 
 target_include_directories(test_reduction PRIVATE
@@ -36,21 +38,5 @@ target_include_directories(test_reduction PRIVATE
 
 # Keep files separate with separable compilation
 set_target_properties(test_reduction PROPERTIES 
-    CUDA_SEPARABLE_COMPILATION ON
-)
-
-# Softmax test binary
-add_executable(test_softmax
-    tests/test_softmax.cu
-    src/reduce/reduce_softmax.cu
-    src/reduce/reduce_softmax_matrix.cu
-    src/reduce/reduce_max.cu
-)
-
-target_include_directories(test_softmax PRIVATE
-    src/reduce
-)
-
-set_target_properties(test_softmax PROPERTIES 
     CUDA_SEPARABLE_COMPILATION ON
 )
