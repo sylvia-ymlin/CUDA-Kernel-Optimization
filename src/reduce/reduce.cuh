@@ -3,10 +3,10 @@
 
 // Sum reductions (various implementations in reduce_sum.cu)
 __global__ void sum_v0(float* X, float* Y);
-__global__ void sum_v2(float* X, float* Y, int n);
-__global__ void sum_v3(float* X, float* Y, int n);
-__global__ void sum_v4(float* X, float* Y, int n);
-__global__ void sum_v5(float* X, float* Y, int n);
+__global__ void sum_v2(const float* X, float* Y, int n);
+__global__ void sum_v3(const float* X, float* Y, int n);
+__global__ void sum_v4(const float* X, float* Y, int n);
+__global__ void sum_v5(const float* X, float* Y, int n);
 
 // Max reduction (reduce_max.cu)
 __global__ void max_kernel(float* input, float* output, int N);
