@@ -27,6 +27,7 @@ set_target_properties(test_elementwise PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 add_executable(test_reduction
     tests/test_reduction.cu
     src/reduce/reduce_sum.cu
+    src/reduce/reduce_max.cu
 )
 
 target_include_directories(test_reduction PRIVATE
