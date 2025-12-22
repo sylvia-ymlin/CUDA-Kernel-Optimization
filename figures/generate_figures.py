@@ -136,31 +136,27 @@ def generate_roofline():
     
     # Peak lines
     ax.axhline(y=peak_gflops, color='red', linestyle=':', linewidth=1.5, alpha=0.7)
-    ax.text(500, peak_gflops * 1.05, f'Peak Compute: {peak_gflops} GFLOPS',
-            fontsize=9, color='red', ha='right', va='bottom')
+    ax.text(0.015, peak_gflops * 1.08, f'Peak Compute: {peak_gflops} GFLOPS',
+            fontsize=9, color='red', ha='left', va='bottom')
     
-    # Kernel data points
+    # Kernel data points with custom label positions (x_offset, y_offset in points)
     kernels = [
-        # (name, AI, achieved_gflops, color, marker)
-        ('Elementwise\n(79% BW)', 0.125, 0.125 * 252, '#2ecc71', 'o'),
-        ('Reduction\n(91% BW)', 0.125, 0.125 * 290, '#27ae60', 's'),
-        ('Transpose\n(62% BW)', 0.0625, 0.0625 * 199, '#3498db', '^'),
-        ('SGEMM v7\n(65% cuBLAS)', 170, 4209, '#e74c3c', 'D'),
-        ('cuBLAS\n(reference)', 170, 6523, '#9b59b6', '*'),
+        # (name, AI, achieved_gflops, color, marker, x_off, y_off, ha)
+        ('Elementwise (79% BW)', 0.125, 0.125 * 252, '#2ecc71', 'o', 12, 0, 'left'),
+        ('Reduction (91% BW)', 0.125, 0.125 * 290, '#27ae60', 's', 12, 5, 'left'),
+        ('Transpose (62% BW)', 0.0625, 0.0625 * 199, '#3498db', '^', 12, -5, 'left'),
+        ('SGEMM v7 (65% cuBLAS)', 170, 4209, '#e74c3c', 'D', 15, -15, 'left'),
+        ('cuBLAS (reference)', 170, 6523, '#9b59b6', '*', 15, 10, 'left'),
     ]
     
-    for name, ai_val, gflops, color, marker in kernels:
+    for name, ai_val, gflops, color, marker, x_off, y_off, ha in kernels:
         ax.scatter([ai_val], [gflops], c=color, s=150, marker=marker, 
                    edgecolors='black', linewidths=1.5, zorder=5)
-        # Offset text to avoid overlap
-        if 'SGEMM' in name or 'cuBLAS' in name:
-            ax.annotate(name, (ai_val, gflops), xytext=(10, 10),
-                       textcoords='offset points', fontsize=9,
-                       fontweight='bold', color=color)
-        else:
-            ax.annotate(name, (ai_val, gflops), xytext=(-5, 15),
-                       textcoords='offset points', fontsize=9,
-                       fontweight='bold', color=color, ha='center')
+        ax.annotate(name, (ai_val, gflops), xytext=(x_off, y_off),
+                   textcoords='offset points', fontsize=9,
+                   fontweight='bold', color=color, ha=ha,
+                   bbox=dict(boxstyle='round,pad=0.2', facecolor='white', 
+                            edgecolor='none', alpha=0.7))
     
     # Realistic ceilings (dashed lines)
     practical_bw = 280  # After ECC, controller overhead
