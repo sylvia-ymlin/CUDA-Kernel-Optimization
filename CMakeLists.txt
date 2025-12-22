@@ -34,7 +34,10 @@ target_include_directories(test_reduction PRIVATE
     src/reduce
 )
 
-# Disable separable compilation for simpler device linking
+# Keep files separate - enable separable compilation with proper device linking
 set_target_properties(test_reduction PROPERTIES 
-    CUDA_SEPARABLE_COMPILATION OFF
+    CUDA_SEPARABLE_COMPILATION ON
 )
+
+# Force device linking with nvcc explicitly
+target_link_options(test_reduction PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--device-link>)
