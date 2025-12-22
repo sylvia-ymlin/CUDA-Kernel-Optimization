@@ -6,6 +6,26 @@ A hands‑on exploration of GPU performance through custom CUDA kernel developme
 
 Performance on GPUs is governed by efficient data movement through the memory hierarchy and keeping Streaming Multiprocessors (SMs) fully utilized. This project emphasizes learning these principles through practical kernel development rather than relying on high‑level libraries.
 
+### Scope and Intentional Exclusions
+
+This baseline focuses on **FP32 CUDA C++ optimization** with transparent, pedagogical implementations. The following are **intentionally excluded** to keep the optimization path clear:
+
+- **Tensor Cores / WMMA** – Would provide ~2x SGEMM throughput but obscures fundamental optimization principles
+- **FP16 / BF16** – Mixed precision doubles effective bandwidth but changes numerical behavior  
+- **PTX / SASS assembly** – Low-level tuning deferred to future work
+- **Autotuning** – Fixed tile sizes for reproducibility; cuBLAS auto-tunes per GPU
+
+These exclusions are deliberate: the goal is to understand *why* optimizations work, not to replicate library performance.
+
+### Measurement Methodology
+
+All performance measurements follow rigorous methodology:
+- **Warmup:** 5 iterations before timing to ensure stable GPU state
+- **Timing:** 20 iterations averaged using `cudaEvent` for sub-millisecond precision
+- **Problem sizes:** Large enough (32M elements, 1024³ matrices) to amortize kernel launch overhead
+- **Correctness:** Verified against CPU reference before any performance measurement
+- **Reproducibility:** Fixed random seed, deterministic algorithms
+
 ## Environment
 
 | Property | Value |
@@ -136,6 +156,11 @@ GFLOPS   │
 | Transpose | 0 FLOP/byte | **Memory** | Bandwidth |
 | SGEMM | ~170 FLOP/byte | **Compute** | FLOPS |
 
+**Ceiling analysis:**
+- **Elementwise/Reduction:** Limited by DRAM bandwidth (320 GB/s), not L2 or instruction throughput. Achievable ceiling ~280-300 GB/s after ECC and memory controller overhead.
+- **Transpose:** Limited by read-write asymmetry—each element requires one strided read and one coalesced write (or vice versa). Effective ceiling ~250 GB/s even with perfect tiling.
+- **SGEMM:** Limited by FMA throughput. High arithmetic intensity (170 FLOP/byte) means data reuse hides memory latency entirely.
+
 ## Summary
 
 | Kernel | Classification | Achieved | Ceiling | Status |
@@ -158,7 +183,8 @@ Transpose v4  ██████████████████████
 
 ## Elementwise Operations (32M elements)
 
-**Classification:** Memory-bound (AI ≈ 0.125 FLOP/byte)
+**Classification:** Memory-bound (AI ≈ 0.125 FLOP/byte)  
+**Efficiency metric:** % of 320 GB/s peak DRAM bandwidth
 
 | Kernel | Time (ms) | Bandwidth (GB/s) | Efficiency |
 |--------|-----------|------------------|------------|
@@ -166,13 +192,14 @@ Transpose v4  ██████████████████████
 | SIGMOID (float4) | 1.113 | 241.3 | 75.4% |
 | RELU (float4) | 1.149 | 233.6 | 73.0% |
 
-At 73-79% of peak bandwidth, we're near the practical ceiling. The limiting factor is DRAM bandwidth, not compute.
+At 73-79% of peak DRAM bandwidth, these kernels are near the practical ceiling. Performance is limited by global memory throughput—not L2 cache, not instruction issue, not compute. Further optimization yields diminishing returns.
 
 ---
 
 ## Reduction Sum (32M elements)
 
-**Classification:** Memory-bound (AI ≈ 0.125 FLOP/byte)
+**Classification:** Memory-bound (AI ≈ 0.125 FLOP/byte)  
+**Efficiency metric:** % of 320 GB/s peak DRAM bandwidth
 
 | Version | Intent | Time (ms) | BW (GB/s) | Speedup |
 |---------|--------|-----------|-----------|---------|
@@ -198,7 +225,8 @@ v5 (float4+shfl)    ████████████████████
 
 ## Matrix Transpose (4096×4096)
 
-**Classification:** Memory-bound (AI = 0, pure data movement)
+**Classification:** Memory-bound (AI = 0, pure data movement)  
+**Efficiency metric:** % of 320 GB/s peak DRAM bandwidth
 
 | Version | Intent | Time (ms) | BW (GB/s) | Speedup |
 |---------|--------|-----------|-----------|---------|
@@ -227,7 +255,8 @@ At **62% of peak bandwidth**, transpose is limited by the fundamental read-write
 
 ## SGEMM (1024×1024×1024)
 
-**Classification:** Compute-bound (AI ≈ 170 FLOP/byte)
+**Classification:** Compute-bound (AI ≈ 170 FLOP/byte)  
+**Efficiency metric:** % of cuBLAS throughput (FP32, same hardware)
 
 | Version | Intent | Time (ms) | GFLOPS | % cuBLAS |
 |---------|--------|-----------|--------|----------|
@@ -286,26 +315,28 @@ v7 reaches **82% of cuBLAS at large sizes**—the gap narrows as overhead become
 
 ## Key Learnings
 
-1. **Memory-bound kernels (elementwise, reduction, transpose):**
-   - Optimize for bandwidth: coalescing, vectorization, cache utilization
-   - Once at >75% bandwidth, diminishing returns
-   - Further gains require algorithmic changes (fusion, compression)
+These are not hypotheses—they are conclusions supported by measurement.
 
-2. **Compute-bound kernels (SGEMM):**
-   - Optimize for arithmetic intensity: tiling, register blocking
-   - Occupancy vs ILP tradeoff is real
-   - Next level requires tensor cores or mixed precision
+1. **Memory-bound kernels hit the DRAM wall.**
+   - Elementwise, reduction, and transpose are all limited by the same ceiling: 320 GB/s DRAM bandwidth.
+   - Once a kernel reaches 75-90% of this ceiling, no amount of thread tuning or unrolling will help.
+   - The only path forward is algorithmic: kernel fusion, compression, or moving to faster memory (L2, shared).
 
-3. **Universal patterns that work:**
-   - float4 vectorization for 4x fewer memory transactions
-   - Warp shuffle for intra-warp communication (no shared memory)
-   - Shared memory tiling for inter-warp data reuse
-   - Double buffering to hide latency
+2. **Compute-bound kernels demand register reuse.**
+   - SGEMM performance is determined by arithmetic intensity—how many FLOPs per byte loaded.
+   - Tiling to registers (not just shared memory) is the critical optimization; it increased throughput 2.7x from v5 to v6.
+   - The occupancy-vs-ILP tradeoff is real: fewer threads with more registers per thread outperforms high occupancy with register spilling.
 
-4. **Edge cases:**
-   - Kernel launch overhead dominates for <10K elements
-   - L2 cache causes artificially high bandwidth for <1M elements
-   - Non-power-of-two dimensions: ~1% overhead for transpose, ~22% for SGEMM
+3. **Four patterns dominate GPU optimization:**
+   - **float4 vectorization:** 4x fewer memory transactions, 4x better bandwidth utilization
+   - **Warp shuffle:** Eliminates shared memory for intra-warp communication
+   - **Shared memory tiling:** Converts strided global access to coalesced access
+   - **Double buffering:** Overlaps memory loads with compute, hiding latency
+
+4. **Edge cases are predictable:**
+   - Kernel launch overhead (~2μs) dominates for <10K elements—batch or use CPU
+   - L2 cache (4MB) causes artificially high bandwidth for working sets <1M elements
+   - Non-power-of-two dimensions cost ~1% for transpose (proper bounds checking), ~22% for SGEMM (tile waste)
 
 ---
 
@@ -355,4 +386,11 @@ nsys profile -o trace ./build/test_sgemm
 
 ---
 
-*Baseline checkpoint: `v1.0-baseline` | Tesla T4 | December 2024*
+---
+
+**Baseline checkpoint:** `v1.0-baseline`  
+**Hardware:** Tesla T4 (Turing, SM 7.5)  
+**Scope:** FP32 CUDA C++, no tensor cores, no mixed precision  
+**Date:** December 2024
+
+*Future work (tensor cores, FP16, CUDA graphs) will branch from this baseline.*
