@@ -34,8 +34,7 @@ target_include_directories(test_reduction PRIVATE
     src/reduce
 )
 
-# Enable separable compilation and device symbol resolution
+# Disable separable compilation for simpler device linking
 set_target_properties(test_reduction PROPERTIES 
-    CUDA_SEPARABLE_COMPILATION ON
-    CUDA_RESOLVE_DEVICE_SYMBOLS ON
+    CUDA_SEPARABLE_COMPILATION OFF
 )
