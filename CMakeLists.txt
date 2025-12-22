@@ -40,3 +40,17 @@ target_include_directories(test_reduction PRIVATE
 set_target_properties(test_reduction PROPERTIES 
     CUDA_SEPARABLE_COMPILATION ON
 )
+
+# Transpose test binary
+add_executable(test_transpose
+    tests/test_transpose.cu
+    src/transpose/transpose.cu
+)
+
+target_include_directories(test_transpose PRIVATE
+    src/transpose
+)
+
+set_target_properties(test_transpose PROPERTIES 
+    CUDA_SEPARABLE_COMPILATION ON
+)
