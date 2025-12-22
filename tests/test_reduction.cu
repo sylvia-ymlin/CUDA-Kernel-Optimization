@@ -2,7 +2,9 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <chrono>
 #include <vector>
+#include <algorithm>
 
 #include "../src/reduce/reduce.cuh"
 
@@ -14,8 +16,7 @@ inline void _cudaCheck(cudaError_t error, const char* file, int line) {
     }
 }
 
-// ceiling division helper
-#define CEIL(a, b) (((a) + (b) - 1) / (b))
+#define CEIL_DIV(a, b) (((a) + (b) - 1) / (b))
 
 struct PerfMetrics {
     float avg_ms;
@@ -25,16 +26,57 @@ struct PerfMetrics {
     int threads_per_block;
 };
 
-void print_metrics(const char* name, const PerfMetrics& m, int n) {
-    std::printf("%-20s: %.3f ms/iter, %.2f GB/s", name, m.avg_ms, m.bandwidth_gb);
-    if (m.gflops > 0) std::printf(", %.2f GFLOPS", m.gflops);
-    std::printf("\n");
-    std::printf("%-20s  Grid: %d blocks x %d threads\n", "", m.blocks, m.threads_per_block);
-    std::printf("%-20s  Elements: %d\n\n", "", n);
+// CPU baseline implementations
+float cpu_reduce_sum(const float* X, int n) {
+    float sum = 0.0f;
+    for (int i = 0; i < n; ++i) {
+        sum += X[i];
+    }
+    return sum;
 }
 
-// Aggregate all sum kernel checks in one place
+float cpu_reduce_max(const float* X, int n) {
+    float max_val = X[0];
+    for (int i = 1; i < n; ++i) {
+        if (X[i] > max_val) max_val = X[i];
+    }
+    return max_val;
+}
+
+void print_device_info() {
+    int device;
+    cudaGetDevice(&device);
+    cudaDeviceProp prop;
+    cudaGetDeviceProperties(&prop, device);
+    
+    std::printf("=== Device Information ===\n");
+    std::printf("Device: %s\n", prop.name);
+    std::printf("Compute Capability: %d.%d\n", prop.major, prop.minor);
+    std::printf("SM Count: %d\n", prop.multiProcessorCount);
+    std::printf("Max Threads per SM: %d\n", prop.maxThreadsPerMultiProcessor);
+    std::printf("Max Threads per Block: %d\n", prop.maxThreadsPerBlock);
+    std::printf("Shared Memory per Block: %zu KB\n", prop.sharedMemPerBlock / 1024);
+    std::printf("Global Memory: %.2f GB\n", prop.totalGlobalMem / (1024.0 * 1024.0 * 1024.0));
+    std::printf("Memory Clock Rate: %.2f GHz\n", prop.memoryClockRate / 1e6);
+    std::printf("Memory Bus Width: %d-bit\n", prop.memoryBusWidth);
+    std::printf("Peak Memory Bandwidth: %.2f GB/s\n\n", 
+                2.0 * prop.memoryClockRate * (prop.memoryBusWidth / 8) / 1.0e6);
+}
+
+void print_metrics(const char* name, const PerfMetrics& m, int n) {
+    std::printf("%-25s: %.4f ms/iter, %.2f GB/s", name, m.avg_ms, m.bandwidth_gb);
+    if (m.gflops > 0) std::printf(", %.2f GFLOPS", m.gflops);
+    std::printf("\n");
+    std::printf("%-25s  Grid: %d blocks x %d threads\n", "", m.blocks, m.threads_per_block);
+    std::printf("%-25s  Elements: %d\n\n", "", n);
+}
+
+// ============================================================================
+// Correctness Tests
+// ============================================================================
+
 void test_sum_kernels() {
+    std::printf("Testing sum_v0 (naive single-block)...\n");
     // sum_v0: one-block sanity
     {
         constexpr int N0 = 256;
@@ -54,7 +96,7 @@ void test_sum_kernels() {
 
         const float expected = (N0 - 1) * N0 / 2.0f;
         if (std::fabs(h_out - expected) > 1e-3f) {
-            std::printf("sum_v0 failed: got %f expected %f\n", h_out, expected);
+            std::printf("sum_v0 FAILED: got %f expected %f\n", h_out, expected);
             std::exit(EXIT_FAILURE);
         }
         std::printf("sum_v0: PASS (value=%f)\n", h_out);
@@ -72,7 +114,7 @@ void test_sum_kernels() {
     for (int i = 0; i < N; ++i) h_in[i] = static_cast<float>(i);
 
     float *d_in = nullptr, *d_out = nullptr;
-    const int grid_max = CEIL(N, BLOCK);
+    const int grid_max = CEIL_DIV(N, BLOCK);
     cudaCheck(cudaMalloc(&d_in, N * sizeof(float)));
     cudaCheck(cudaMalloc(&d_out, grid_max * sizeof(float)));
     cudaCheck(cudaMemcpy(d_in, h_in.data(), N * sizeof(float), cudaMemcpyHostToDevice));
@@ -81,15 +123,16 @@ void test_sum_kernels() {
 
     auto check_result = [&](const char* name, float value) {
         if (std::fabs(value - expected) > 1e-3f) {
-            std::printf("%s failed: got %f expected %f\n", name, value, expected);
+            std::printf("%s FAILED: got %f expected %f\n", name, value, expected);
             std::exit(EXIT_FAILURE);
         }
         std::printf("%s: PASS (value=%f)\n", name, value);
     };
 
     // sum_v2: dynamic shared, per-block partials
+    std::printf("Testing sum_v2 (dynamic shared)...\n");
     {
-        const int grid = CEIL(N, BLOCK);
+        const int grid = CEIL_DIV(N, BLOCK);
         sum_v2<<<grid, BLOCK, BLOCK * sizeof(float)>>>(d_in, d_out, N);
         cudaCheck(cudaGetLastError());
         cudaCheck(cudaMemcpy(h_out.data(), d_out, grid * sizeof(float), cudaMemcpyDeviceToHost));
@@ -99,8 +142,9 @@ void test_sum_kernels() {
     }
 
     // sum_v3: dynamic shared + atomic to single output
+    std::printf("Testing sum_v3 (dynamic shared + atomic)...\n");
     {
-        const int grid = CEIL(N, BLOCK);
+        const int grid = CEIL_DIV(N, BLOCK);
         cudaCheck(cudaMemset(d_out, 0, sizeof(float)));
         sum_v3<<<grid, BLOCK, BLOCK * sizeof(float)>>>(d_in, d_out, N);
         cudaCheck(cudaGetLastError());
@@ -110,8 +154,9 @@ void test_sum_kernels() {
     }
 
     // sum_v4: warp shuffle producing per-block partials
+    std::printf("Testing sum_v4 (warp shuffle)...\n");
     {
-        const int grid = CEIL(N, BLOCK);
+        const int grid = CEIL_DIV(N, BLOCK);
         sum_v4<<<grid, BLOCK>>>(d_in, d_out, N);
         cudaCheck(cudaGetLastError());
         cudaCheck(cudaMemcpy(h_out.data(), d_out, grid * sizeof(float), cudaMemcpyDeviceToHost));
@@ -121,8 +166,9 @@ void test_sum_kernels() {
     }
 
     // sum_v5: float4 load + warp shuffle, per-block partials
+    std::printf("Testing sum_v5 (float4 + warp shuffle)...\n");
     {
-        const int grid = CEIL(N, BLOCK * 4);
+        const int grid = CEIL_DIV(N, BLOCK * 4);
         sum_v5<<<grid, BLOCK>>>(d_in, d_out, N);
         cudaCheck(cudaGetLastError());
         cudaCheck(cudaMemcpy(h_out.data(), d_out, grid * sizeof(float), cudaMemcpyDeviceToHost));
@@ -135,11 +181,11 @@ void test_sum_kernels() {
     cudaCheck(cudaFree(d_out));
 }
 
-// Simple sanity test for max_kernel
 void test_max_kernel() {
+    std::printf("Testing max_kernel...\n");
     constexpr int N = 512;
     constexpr int BLOCK = 256;
-    const int GRID = (N + BLOCK - 1) / BLOCK;
+    const int GRID = CEIL_DIV(N, BLOCK);
 
     float *h_in = (float*)malloc(N * sizeof(float));
     for (int i = 0; i < N; ++i) h_in[i] = -1000.0f + static_cast<float>(i);
@@ -156,7 +202,7 @@ void test_max_kernel() {
 
     const float expected = h_in[N - 1];
     if (std::fabs(h_out - expected) > 1e-3f) {
-        std::printf("max_kernel failed: got %f expected %f\n", h_out, expected);
+        std::printf("max_kernel FAILED: got %f expected %f\n", h_out, expected);
         std::exit(EXIT_FAILURE);
     }
     std::printf("max_kernel: PASS (value=%f)\n", h_out);
@@ -166,115 +212,472 @@ void test_max_kernel() {
     free(h_in);
 }
 
-void perf_reduce_sum() {
-    constexpr int N = 32 * 1024 * 1024;   // 32M elements
+// ============================================================================
+// Performance Tests
+// ============================================================================
+
+void perf_sum_v2() {
+    constexpr int N = 32 * 1024 * 1024;  // 32M elements
     constexpr int BLOCK = 256;
     constexpr int WARMUP = 3;
     constexpr int ITERS = 100;
+    const int grid = CEIL_DIV(N, BLOCK);
 
-    float *d_in = nullptr;
-    float *d_out_v3 = nullptr;
-    float *d_out_v5 = nullptr;
-    const int grid_v3 = CEIL(N, BLOCK);
-    const int grid_v5 = CEIL(N, BLOCK * 4);
-
+    float *d_in = nullptr, *d_out = nullptr;
     cudaCheck(cudaMalloc(&d_in, N * sizeof(float)));
-    cudaCheck(cudaMalloc(&d_out_v3, sizeof(float)));
-    cudaCheck(cudaMalloc(&d_out_v5, grid_v5 * sizeof(float)));
+    cudaCheck(cudaMalloc(&d_out, grid * sizeof(float)));
 
-    // Fill input with a simple pattern
+    // Fill input
     std::vector<float> h_in(N);
     for (int i = 0; i < N; ++i) h_in[i] = static_cast<float>(i % 13);
     cudaCheck(cudaMemcpy(d_in, h_in.data(), N * sizeof(float), cudaMemcpyHostToDevice));
 
-    // Warmup sum_v3 (atomic to single output)
+    // Warmup
     for (int i = 0; i < WARMUP; ++i) {
-        cudaCheck(cudaMemset(d_out_v3, 0, sizeof(float)));
-        sum_v3<<<grid_v3, BLOCK, BLOCK * sizeof(float)>>>(d_in, d_out_v3, N);
+        sum_v2<<<grid, BLOCK, BLOCK * sizeof(float)>>>(d_in, d_out, N);
     }
     cudaCheck(cudaDeviceSynchronize());
 
-    // Time sum_v3
+    // Timing
     cudaEvent_t start, stop;
     cudaCheck(cudaEventCreate(&start));
     cudaCheck(cudaEventCreate(&stop));
 
     cudaCheck(cudaEventRecord(start));
     for (int i = 0; i < ITERS; ++i) {
-        cudaCheck(cudaMemset(d_out_v3, 0, sizeof(float)));
-        sum_v3<<<grid_v3, BLOCK, BLOCK * sizeof(float)>>>(d_in, d_out_v3, N);
+        sum_v2<<<grid, BLOCK, BLOCK * sizeof(float)>>>(d_in, d_out, N);
     }
     cudaCheck(cudaEventRecord(stop));
     cudaCheck(cudaEventSynchronize(stop));
 
-    float ms_v3 = 0.0f;
-    cudaCheck(cudaEventElapsedTime(&ms_v3, start, stop));
-    float sum_v3_host = 0.0f;
-    cudaCheck(cudaMemcpy(&sum_v3_host, d_out_v3, sizeof(float), cudaMemcpyDeviceToHost));
+    float ms;
+    cudaCheck(cudaEventElapsedTime(&ms, start, stop));
 
-    PerfMetrics m3;
-    m3.avg_ms = ms_v3 / ITERS;
-    m3.bandwidth_gb = (N * sizeof(float)) / (m3.avg_ms * 1e6);
-    m3.gflops = (N / 1e9f) / (m3.avg_ms / 1000.0f);
-    m3.blocks = grid_v3;
-    m3.threads_per_block = BLOCK;
-    print_metrics("sum_v3 (atomic)", m3, N);
-
-    // Warmup sum_v5 (float4 + warp shuffle producing partials)
-    for (int i = 0; i < WARMUP; ++i) {
-        sum_v5<<<grid_v5, BLOCK>>>(d_in, d_out_v5, N);
-    }
-    cudaCheck(cudaDeviceSynchronize());
-
-    // Time sum_v5
-    cudaCheck(cudaEventRecord(start));
-    for (int i = 0; i < ITERS; ++i) {
-        sum_v5<<<grid_v5, BLOCK>>>(d_in, d_out_v5, N);
-    }
-    cudaCheck(cudaEventRecord(stop));
-    cudaCheck(cudaEventSynchronize(stop));
-
-    float ms_v5 = 0.0f;
-    cudaCheck(cudaEventElapsedTime(&ms_v5, start, stop));
-    std::vector<float> h_out_v5(grid_v5);
-    cudaCheck(cudaMemcpy(h_out_v5.data(), d_out_v5, grid_v5 * sizeof(float), cudaMemcpyDeviceToHost));
-    float sum_v5_host = 0.0f;
-    for (int i = 0; i < grid_v5; ++i) sum_v5_host += h_out_v5[i];
-
-    PerfMetrics m5;
-    m5.avg_ms = ms_v5 / ITERS;
-    m5.bandwidth_gb = (N * sizeof(float)) / (m5.avg_ms * 1e6);
-    m5.gflops = (N / 1e9f) / (m5.avg_ms / 1000.0f);
-    m5.blocks = grid_v5;
-    m5.threads_per_block = BLOCK;
-    print_metrics("sum_v5 (float4)", m5, N);
-
-    const int cycles = N / 13;
-    const int rem = N % 13;
-    const double expected = static_cast<double>(cycles) * 78.0 + static_cast<double>(rem) * (rem - 1) / 2.0;
-    auto validate = [&](const char* name, double got) {
-        if (std::fabs(got - expected) > 1e-2 * std::fabs(expected)) {
-            std::printf("%s failed validation: got %.4f expected %.4f\n", name, got, expected);
-            std::exit(EXIT_FAILURE);
-        }
-        std::printf("%s validation: PASS (value=%.4f)\n", name, got);
-    };
-
-    validate("sum_v3", static_cast<double>(sum_v3_host));
-    validate("sum_v5", static_cast<double>(sum_v5_host));
+    PerfMetrics m;
+    m.avg_ms = ms / ITERS;
+    m.bandwidth_gb = (N * sizeof(float)) / (m.avg_ms * 1e6);  // Read N floats
+    m.gflops = (N / 1e9f) / (m.avg_ms / 1000.0f);  // N-1 additions
+    m.blocks = grid;
+    m.threads_per_block = BLOCK;
+    print_metrics("sum_v2 (dynamic shared)", m, N);
 
     cudaCheck(cudaEventDestroy(start));
     cudaCheck(cudaEventDestroy(stop));
     cudaCheck(cudaFree(d_in));
-    cudaCheck(cudaFree(d_out_v3));
-    cudaCheck(cudaFree(d_out_v5));
+    cudaCheck(cudaFree(d_out));
 }
 
+void perf_sum_v3() {
+    constexpr int N = 32 * 1024 * 1024;
+    constexpr int BLOCK = 256;
+    constexpr int WARMUP = 3;
+    constexpr int ITERS = 100;
+    const int grid = CEIL_DIV(N, BLOCK);
+
+    float *d_in = nullptr, *d_out = nullptr;
+    cudaCheck(cudaMalloc(&d_in, N * sizeof(float)));
+    cudaCheck(cudaMalloc(&d_out, sizeof(float)));
+
+    std::vector<float> h_in(N);
+    for (int i = 0; i < N; ++i) h_in[i] = static_cast<float>(i % 13);
+    cudaCheck(cudaMemcpy(d_in, h_in.data(), N * sizeof(float), cudaMemcpyHostToDevice));
+
+    // Warmup
+    for (int i = 0; i < WARMUP; ++i) {
+        cudaCheck(cudaMemset(d_out, 0, sizeof(float)));
+        sum_v3<<<grid, BLOCK, BLOCK * sizeof(float)>>>(d_in, d_out, N);
+    }
+    cudaCheck(cudaDeviceSynchronize());
+
+    // Timing
+    cudaEvent_t start, stop;
+    cudaCheck(cudaEventCreate(&start));
+    cudaCheck(cudaEventCreate(&stop));
+
+    cudaCheck(cudaEventRecord(start));
+    for (int i = 0; i < ITERS; ++i) {
+        cudaCheck(cudaMemset(d_out, 0, sizeof(float)));
+        sum_v3<<<grid, BLOCK, BLOCK * sizeof(float)>>>(d_in, d_out, N);
+    }
+    cudaCheck(cudaEventRecord(stop));
+    cudaCheck(cudaEventSynchronize(stop));
+
+    float ms;
+    cudaCheck(cudaEventElapsedTime(&ms, start, stop));
+
+    PerfMetrics m;
+    m.avg_ms = ms / ITERS;
+    m.bandwidth_gb = (N * sizeof(float)) / (m.avg_ms * 1e6);
+    m.gflops = (N / 1e9f) / (m.avg_ms / 1000.0f);
+    m.blocks = grid;
+    m.threads_per_block = BLOCK;
+    print_metrics("sum_v3 (shared + atomic)", m, N);
+
+    cudaCheck(cudaEventDestroy(start));
+    cudaCheck(cudaEventDestroy(stop));
+    cudaCheck(cudaFree(d_in));
+    cudaCheck(cudaFree(d_out));
+}
+
+void perf_sum_v4() {
+    constexpr int N = 32 * 1024 * 1024;
+    constexpr int BLOCK = 256;
+    constexpr int WARMUP = 3;
+    constexpr int ITERS = 100;
+    const int grid = CEIL_DIV(N, BLOCK);
+
+    float *d_in = nullptr, *d_out = nullptr;
+    cudaCheck(cudaMalloc(&d_in, N * sizeof(float)));
+    cudaCheck(cudaMalloc(&d_out, grid * sizeof(float)));
+
+    std::vector<float> h_in(N);
+    for (int i = 0; i < N; ++i) h_in[i] = static_cast<float>(i % 13);
+    cudaCheck(cudaMemcpy(d_in, h_in.data(), N * sizeof(float), cudaMemcpyHostToDevice));
+
+    // Warmup
+    for (int i = 0; i < WARMUP; ++i) {
+        sum_v4<<<grid, BLOCK>>>(d_in, d_out, N);
+    }
+    cudaCheck(cudaDeviceSynchronize());
+
+    // Timing
+    cudaEvent_t start, stop;
+    cudaCheck(cudaEventCreate(&start));
+    cudaCheck(cudaEventCreate(&stop));
+
+    cudaCheck(cudaEventRecord(start));
+    for (int i = 0; i < ITERS; ++i) {
+        sum_v4<<<grid, BLOCK>>>(d_in, d_out, N);
+    }
+    cudaCheck(cudaEventRecord(stop));
+    cudaCheck(cudaEventSynchronize(stop));
+
+    float ms;
+    cudaCheck(cudaEventElapsedTime(&ms, start, stop));
+
+    PerfMetrics m;
+    m.avg_ms = ms / ITERS;
+    m.bandwidth_gb = (N * sizeof(float)) / (m.avg_ms * 1e6);
+    m.gflops = (N / 1e9f) / (m.avg_ms / 1000.0f);
+    m.blocks = grid;
+    m.threads_per_block = BLOCK;
+    print_metrics("sum_v4 (warp shuffle)", m, N);
+
+    cudaCheck(cudaEventDestroy(start));
+    cudaCheck(cudaEventDestroy(stop));
+    cudaCheck(cudaFree(d_in));
+    cudaCheck(cudaFree(d_out));
+}
+
+void perf_sum_v5() {
+    constexpr int N = 32 * 1024 * 1024;
+    constexpr int BLOCK = 256;
+    constexpr int WARMUP = 3;
+    constexpr int ITERS = 100;
+    const int grid = CEIL_DIV(N, BLOCK * 4);
+
+    float *d_in = nullptr, *d_out = nullptr;
+    cudaCheck(cudaMalloc(&d_in, N * sizeof(float)));
+    cudaCheck(cudaMalloc(&d_out, grid * sizeof(float)));
+
+    std::vector<float> h_in(N);
+    for (int i = 0; i < N; ++i) h_in[i] = static_cast<float>(i % 13);
+    cudaCheck(cudaMemcpy(d_in, h_in.data(), N * sizeof(float), cudaMemcpyHostToDevice));
+
+    // Warmup
+    for (int i = 0; i < WARMUP; ++i) {
+        sum_v5<<<grid, BLOCK>>>(d_in, d_out, N);
+    }
+    cudaCheck(cudaDeviceSynchronize());
+
+    // Timing
+    cudaEvent_t start, stop;
+    cudaCheck(cudaEventCreate(&start));
+    cudaCheck(cudaEventCreate(&stop));
+
+    cudaCheck(cudaEventRecord(start));
+    for (int i = 0; i < ITERS; ++i) {
+        sum_v5<<<grid, BLOCK>>>(d_in, d_out, N);
+    }
+    cudaCheck(cudaEventRecord(stop));
+    cudaCheck(cudaEventSynchronize(stop));
+
+    float ms;
+    cudaCheck(cudaEventElapsedTime(&ms, start, stop));
+
+    PerfMetrics m;
+    m.avg_ms = ms / ITERS;
+    m.bandwidth_gb = (N * sizeof(float)) / (m.avg_ms * 1e6);
+    m.gflops = (N / 1e9f) / (m.avg_ms / 1000.0f);
+    m.blocks = grid;
+    m.threads_per_block = BLOCK;
+    print_metrics("sum_v5 (float4 + shuffle)", m, N);
+
+    cudaCheck(cudaEventDestroy(start));
+    cudaCheck(cudaEventDestroy(stop));
+    cudaCheck(cudaFree(d_in));
+    cudaCheck(cudaFree(d_out));
+}
+
+// ============================================================================
+// Scalability Analysis
+// ============================================================================
+
+void perf_scalability() {
+    std::printf("\n=== Scalability Analysis (Reduction Sum) ===\n");
+    std::vector<int> sizes = {1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 33554432};
+    
+    int device;
+    cudaGetDevice(&device);
+    cudaDeviceProp prop;
+    cudaGetDeviceProperties(&prop, device);
+    float peak_bw = 2.0f * prop.memoryClockRate * (prop.memoryBusWidth / 8) / 1.0e6;
+    
+    std::printf("\n--- sum_v4 (warp shuffle) ---\n");
+    std::printf("%-12s %-12s %-12s %-12s\n", "Size", "Time (ms)", "BW (GB/s)", "Efficiency (%)");
+    std::printf("--------------------------------------------------------\n");
+    
+    for (int n : sizes) {
+        constexpr int BLOCK = 256;
+        const int grid = CEIL_DIV(n, BLOCK);
+        
+        float *d_in, *d_out;
+        cudaCheck(cudaMalloc(&d_in, n * sizeof(float)));
+        cudaCheck(cudaMalloc(&d_out, grid * sizeof(float)));
+        
+        // Warmup
+        for (int i = 0; i < 3; ++i) {
+            sum_v4<<<grid, BLOCK>>>(d_in, d_out, n);
+        }
+        cudaCheck(cudaDeviceSynchronize());
+        
+        cudaEvent_t start, stop;
+        cudaCheck(cudaEventCreate(&start));
+        cudaCheck(cudaEventCreate(&stop));
+        
+        int iters = (n < 1048576) ? 1000 : 100;
+        cudaCheck(cudaEventRecord(start));
+        for (int i = 0; i < iters; ++i) {
+            sum_v4<<<grid, BLOCK>>>(d_in, d_out, n);
+        }
+        cudaCheck(cudaEventRecord(stop));
+        cudaCheck(cudaEventSynchronize(stop));
+        
+        float ms;
+        cudaCheck(cudaEventElapsedTime(&ms, start, stop));
+        float avg_ms = ms / iters;
+        float bandwidth_gb = (n * sizeof(float)) / (avg_ms * 1e6);
+        float efficiency = (bandwidth_gb / peak_bw) * 100.0f;
+        
+        std::printf("%-12d %-12.4f %-12.2f %-12.1f\n", n, avg_ms, bandwidth_gb, efficiency);
+        
+        cudaCheck(cudaEventDestroy(start));
+        cudaCheck(cudaEventDestroy(stop));
+        cudaCheck(cudaFree(d_in));
+        cudaCheck(cudaFree(d_out));
+    }
+    
+    std::printf("\n--- sum_v5 (float4 + warp shuffle) ---\n");
+    std::printf("%-12s %-12s %-12s %-12s\n", "Size", "Time (ms)", "BW (GB/s)", "Efficiency (%)");
+    std::printf("--------------------------------------------------------\n");
+    
+    for (int n : sizes) {
+        constexpr int BLOCK = 256;
+        const int grid = CEIL_DIV(n, BLOCK * 4);
+        
+        float *d_in, *d_out;
+        cudaCheck(cudaMalloc(&d_in, n * sizeof(float)));
+        cudaCheck(cudaMalloc(&d_out, grid * sizeof(float)));
+        
+        // Warmup
+        for (int i = 0; i < 3; ++i) {
+            sum_v5<<<grid, BLOCK>>>(d_in, d_out, n);
+        }
+        cudaCheck(cudaDeviceSynchronize());
+        
+        cudaEvent_t start, stop;
+        cudaCheck(cudaEventCreate(&start));
+        cudaCheck(cudaEventCreate(&stop));
+        
+        int iters = (n < 1048576) ? 1000 : 100;
+        cudaCheck(cudaEventRecord(start));
+        for (int i = 0; i < iters; ++i) {
+            sum_v5<<<grid, BLOCK>>>(d_in, d_out, n);
+        }
+        cudaCheck(cudaEventRecord(stop));
+        cudaCheck(cudaEventSynchronize(stop));
+        
+        float ms;
+        cudaCheck(cudaEventElapsedTime(&ms, start, stop));
+        float avg_ms = ms / iters;
+        float bandwidth_gb = (n * sizeof(float)) / (avg_ms * 1e6);
+        float efficiency = (bandwidth_gb / peak_bw) * 100.0f;
+        
+        std::printf("%-12d %-12.4f %-12.2f %-12.1f\n", n, avg_ms, bandwidth_gb, efficiency);
+        
+        cudaCheck(cudaEventDestroy(start));
+        cudaCheck(cudaEventDestroy(stop));
+        cudaCheck(cudaFree(d_in));
+        cudaCheck(cudaFree(d_out));
+    }
+}
+
+// ============================================================================
+// CPU Baseline Comparison
+// ============================================================================
+
+void perf_cpu_baseline() {
+    constexpr int N = 1024 * 1024;  // 1M elements for CPU
+    
+    std::vector<float> h_in(N);
+    for (int i = 0; i < N; ++i) {
+        h_in[i] = static_cast<float>(i % 13);
+    }
+    
+    std::printf("\n=== CPU Baseline (1M elements) ===\n");
+    
+    // CPU Reduce Sum
+    auto start = std::chrono::high_resolution_clock::now();
+    float sum = 0.0f;
+    for (int iter = 0; iter < 10; ++iter) {
+        sum = cpu_reduce_sum(h_in.data(), N);
+    }
+    auto end = std::chrono::high_resolution_clock::now();
+    double cpu_ms = std::chrono::duration<double, std::milli>(end - start).count() / 10.0;
+    double cpu_bw = (N * sizeof(float)) / (cpu_ms * 1e6);
+    std::printf("REDUCE_SUM (CPU)     : %.3f ms/iter, %.2f GB/s, sum=%.0f\n", cpu_ms, cpu_bw, sum);
+    
+    // CPU Reduce Max
+    start = std::chrono::high_resolution_clock::now();
+    float max_val = 0.0f;
+    for (int iter = 0; iter < 10; ++iter) {
+        max_val = cpu_reduce_max(h_in.data(), N);
+    }
+    end = std::chrono::high_resolution_clock::now();
+    cpu_ms = std::chrono::duration<double, std::milli>(end - start).count() / 10.0;
+    cpu_bw = (N * sizeof(float)) / (cpu_ms * 1e6);
+    std::printf("REDUCE_MAX (CPU)     : %.3f ms/iter, %.2f GB/s, max=%.0f\n", cpu_ms, cpu_bw, max_val);
+}
+
+// ============================================================================
+// Kernel Comparison Summary
+// ============================================================================
+
+void perf_comparison_summary() {
+    std::printf("\n=== Kernel Performance Comparison (32M elements) ===\n");
+    std::printf("%-25s %-12s %-12s %-12s\n", "Kernel", "Time (ms)", "BW (GB/s)", "Speedup");
+    std::printf("------------------------------------------------------------------------\n");
+    
+    constexpr int N = 32 * 1024 * 1024;
+    constexpr int BLOCK = 256;
+    constexpr int WARMUP = 3;
+    constexpr int ITERS = 100;
+    
+    float *d_in = nullptr;
+    cudaCheck(cudaMalloc(&d_in, N * sizeof(float)));
+    
+    std::vector<float> h_in(N);
+    for (int i = 0; i < N; ++i) h_in[i] = static_cast<float>(i % 13);
+    cudaCheck(cudaMemcpy(d_in, h_in.data(), N * sizeof(float), cudaMemcpyHostToDevice));
+    
+    cudaEvent_t start, stop;
+    cudaCheck(cudaEventCreate(&start));
+    cudaCheck(cudaEventCreate(&stop));
+    
+    float baseline_ms = 0.0f;
+    
+    // Test each kernel variant
+    struct KernelConfig {
+        const char* name;
+        int grid;
+        bool uses_shared;
+        bool uses_atomic;
+        int elements_per_thread;
+    };
+    
+    std::vector<KernelConfig> configs = {
+        {"sum_v2 (shared)", CEIL_DIV(N, BLOCK), true, false, 1},
+        {"sum_v3 (shared+atomic)", CEIL_DIV(N, BLOCK), true, true, 1},
+        {"sum_v4 (warp shuffle)", CEIL_DIV(N, BLOCK), false, false, 1},
+        {"sum_v5 (float4+shuffle)", CEIL_DIV(N, BLOCK * 4), false, false, 4},
+    };
+    
+    for (size_t k = 0; k < configs.size(); ++k) {
+        const auto& cfg = configs[k];
+        float *d_out;
+        cudaCheck(cudaMalloc(&d_out, cfg.grid * sizeof(float)));
+        
+        // Warmup
+        for (int i = 0; i < WARMUP; ++i) {
+            if (k == 0) sum_v2<<<cfg.grid, BLOCK, BLOCK * sizeof(float)>>>(d_in, d_out, N);
+            else if (k == 1) {
+                cudaCheck(cudaMemset(d_out, 0, sizeof(float)));
+                sum_v3<<<cfg.grid, BLOCK, BLOCK * sizeof(float)>>>(d_in, d_out, N);
+            }
+            else if (k == 2) sum_v4<<<cfg.grid, BLOCK>>>(d_in, d_out, N);
+            else if (k == 3) sum_v5<<<cfg.grid, BLOCK>>>(d_in, d_out, N);
+        }
+        cudaCheck(cudaDeviceSynchronize());
+        
+        // Timing
+        cudaCheck(cudaEventRecord(start));
+        for (int i = 0; i < ITERS; ++i) {
+            if (k == 0) sum_v2<<<cfg.grid, BLOCK, BLOCK * sizeof(float)>>>(d_in, d_out, N);
+            else if (k == 1) {
+                cudaCheck(cudaMemset(d_out, 0, sizeof(float)));
+                sum_v3<<<cfg.grid, BLOCK, BLOCK * sizeof(float)>>>(d_in, d_out, N);
+            }
+            else if (k == 2) sum_v4<<<cfg.grid, BLOCK>>>(d_in, d_out, N);
+            else if (k == 3) sum_v5<<<cfg.grid, BLOCK>>>(d_in, d_out, N);
+        }
+        cudaCheck(cudaEventRecord(stop));
+        cudaCheck(cudaEventSynchronize(stop));
+        
+        float ms;
+        cudaCheck(cudaEventElapsedTime(&ms, start, stop));
+        float avg_ms = ms / ITERS;
+        float bandwidth_gb = (N * sizeof(float)) / (avg_ms * 1e6);
+        
+        if (k == 0) baseline_ms = avg_ms;
+        float speedup = baseline_ms / avg_ms;
+        
+        std::printf("%-25s %-12.4f %-12.2f %-12.2fx\n", cfg.name, avg_ms, bandwidth_gb, speedup);
+        
+        cudaCheck(cudaFree(d_out));
+    }
+    
+    cudaCheck(cudaEventDestroy(start));
+    cudaCheck(cudaEventDestroy(stop));
+    cudaCheck(cudaFree(d_in));
+}
+
+// ============================================================================
+// Main
+// ============================================================================
+
 int main() {
+    print_device_info();
+    
+    std::printf("=== Correctness Tests ===\n");
     test_sum_kernels();
+    std::printf("\n");
     test_max_kernel();
-    std::printf("\n=== Performance Tests (32M elements) ===\n");
-    perf_reduce_sum();
-    std::printf("Reduction tests completed.\n");
+    std::printf("\nAll reduction correctness tests passed.\n\n");
+    
+    std::printf("=== Performance Tests (32M elements) ===\n");
+    perf_sum_v2();
+    perf_sum_v3();
+    perf_sum_v4();
+    perf_sum_v5();
+    
+    perf_comparison_summary();
+    perf_scalability();
+    perf_cpu_baseline();
+    
+    std::printf("\n=== Profiling Commands ===\n");
+    std::printf("For detailed kernel metrics, run:\n");
+    std::printf("  ncu --set full --target-processes all -o reduction_profile ./build/test_reduction\n");
+    std::printf("  nsys profile -o reduction_trace ./build/test_reduction\n\n");
+
     return 0;
 }
