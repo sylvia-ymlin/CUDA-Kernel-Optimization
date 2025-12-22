@@ -129,6 +129,19 @@ test_elementwise/fast:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_elementwise.dir/build.make CMakeFiles/test_elementwise.dir/build
 .PHONY : test_elementwise/fast
 
+#=============================================================================
+# Target rules for targets named test_reduction
+
+# Build rule for target.
+test_reduction: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 test_reduction
+.PHONY : test_reduction
+
+# fast build rule for target.
+test_reduction/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_reduction.dir/build.make CMakeFiles/test_reduction.dir/build
+.PHONY : test_reduction/fast
+
 src/elementwise/activations.o: src/elementwise/activations.cu.o
 .PHONY : src/elementwise/activations.o
 
@@ -177,6 +190,54 @@ src/elementwise/elementwise_add.cu.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_elementwise.dir/build.make CMakeFiles/test_elementwise.dir/src/elementwise/elementwise_add.cu.s
 .PHONY : src/elementwise/elementwise_add.cu.s
 
+src/reduce/reduce_max.o: src/reduce/reduce_max.cu.o
+.PHONY : src/reduce/reduce_max.o
+
+# target to build an object file
+src/reduce/reduce_max.cu.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_reduction.dir/build.make CMakeFiles/test_reduction.dir/src/reduce/reduce_max.cu.o
+.PHONY : src/reduce/reduce_max.cu.o
+
+src/reduce/reduce_max.i: src/reduce/reduce_max.cu.i
+.PHONY : src/reduce/reduce_max.i
+
+# target to preprocess a source file
+src/reduce/reduce_max.cu.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_reduction.dir/build.make CMakeFiles/test_reduction.dir/src/reduce/reduce_max.cu.i
+.PHONY : src/reduce/reduce_max.cu.i
+
+src/reduce/reduce_max.s: src/reduce/reduce_max.cu.s
+.PHONY : src/reduce/reduce_max.s
+
+# target to generate assembly for a file
+src/reduce/reduce_max.cu.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_reduction.dir/build.make CMakeFiles/test_reduction.dir/src/reduce/reduce_max.cu.s
+.PHONY : src/reduce/reduce_max.cu.s
+
+src/reduce/reduce_sum.o: src/reduce/reduce_sum.cu.o
+.PHONY : src/reduce/reduce_sum.o
+
+# target to build an object file
+src/reduce/reduce_sum.cu.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_reduction.dir/build.make CMakeFiles/test_reduction.dir/src/reduce/reduce_sum.cu.o
+.PHONY : src/reduce/reduce_sum.cu.o
+
+src/reduce/reduce_sum.i: src/reduce/reduce_sum.cu.i
+.PHONY : src/reduce/reduce_sum.i
+
+# target to preprocess a source file
+src/reduce/reduce_sum.cu.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_reduction.dir/build.make CMakeFiles/test_reduction.dir/src/reduce/reduce_sum.cu.i
+.PHONY : src/reduce/reduce_sum.cu.i
+
+src/reduce/reduce_sum.s: src/reduce/reduce_sum.cu.s
+.PHONY : src/reduce/reduce_sum.s
+
+# target to generate assembly for a file
+src/reduce/reduce_sum.cu.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_reduction.dir/build.make CMakeFiles/test_reduction.dir/src/reduce/reduce_sum.cu.s
+.PHONY : src/reduce/reduce_sum.cu.s
+
 tests/test_elementwise.o: tests/test_elementwise.cu.o
 .PHONY : tests/test_elementwise.o
 
@@ -201,6 +262,30 @@ tests/test_elementwise.cu.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_elementwise.dir/build.make CMakeFiles/test_elementwise.dir/tests/test_elementwise.cu.s
 .PHONY : tests/test_elementwise.cu.s
 
+tests/test_reduction.o: tests/test_reduction.cu.o
+.PHONY : tests/test_reduction.o
+
+# target to build an object file
+tests/test_reduction.cu.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_reduction.dir/build.make CMakeFiles/test_reduction.dir/tests/test_reduction.cu.o
+.PHONY : tests/test_reduction.cu.o
+
+tests/test_reduction.i: tests/test_reduction.cu.i
+.PHONY : tests/test_reduction.i
+
+# target to preprocess a source file
+tests/test_reduction.cu.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_reduction.dir/build.make CMakeFiles/test_reduction.dir/tests/test_reduction.cu.i
+.PHONY : tests/test_reduction.cu.i
+
+tests/test_reduction.s: tests/test_reduction.cu.s
+.PHONY : tests/test_reduction.s
+
+# target to generate assembly for a file
+tests/test_reduction.cu.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_reduction.dir/build.make CMakeFiles/test_reduction.dir/tests/test_reduction.cu.s
+.PHONY : tests/test_reduction.cu.s
+
 # Help Target
 help:
 	@echo "The following are some of the valid targets for this Makefile:"
@@ -210,15 +295,25 @@ help:
 	@echo "... edit_cache"
 	@echo "... rebuild_cache"
 	@echo "... test_elementwise"
+	@echo "... test_reduction"
 	@echo "... src/elementwise/activations.o"
 	@echo "... src/elementwise/activations.i"
 	@echo "... src/elementwise/activations.s"
 	@echo "... src/elementwise/elementwise_add.o"
 	@echo "... src/elementwise/elementwise_add.i"
 	@echo "... src/elementwise/elementwise_add.s"
+	@echo "... src/reduce/reduce_max.o"
+	@echo "... src/reduce/reduce_max.i"
+	@echo "... src/reduce/reduce_max.s"
+	@echo "... src/reduce/reduce_sum.o"
+	@echo "... src/reduce/reduce_sum.i"
+	@echo "... src/reduce/reduce_sum.s"
 	@echo "... tests/test_elementwise.o"
 	@echo "... tests/test_elementwise.i"
 	@echo "... tests/test_elementwise.s"
+	@echo "... tests/test_reduction.o"
+	@echo "... tests/test_reduction.i"
+	@echo "... tests/test_reduction.s"
 .PHONY : help
 
 

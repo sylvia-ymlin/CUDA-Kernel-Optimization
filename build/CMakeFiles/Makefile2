@@ -64,6 +64,7 @@ CMAKE_BINARY_DIR = /home/gm_ymlin/CUDA-Kernel-Optimization-Playground/build
 
 # The main recursive "all" target.
 all: CMakeFiles/test_elementwise.dir/all
+all: CMakeFiles/test_reduction.dir/all
 .PHONY : all
 
 # The main recursive "preinstall" target.
@@ -72,6 +73,7 @@ preinstall:
 
 # The main recursive "clean" target.
 clean: CMakeFiles/test_elementwise.dir/clean
+clean: CMakeFiles/test_reduction.dir/clean
 .PHONY : clean
 
 #=============================================================================
@@ -99,6 +101,32 @@ test_elementwise: CMakeFiles/test_elementwise.dir/rule
 CMakeFiles/test_elementwise.dir/clean:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_elementwise.dir/build.make CMakeFiles/test_elementwise.dir/clean
 .PHONY : CMakeFiles/test_elementwise.dir/clean
+
+#=============================================================================
+# Target rules for target CMakeFiles/test_reduction.dir
+
+# All Build rule for target.
+CMakeFiles/test_reduction.dir/all:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_reduction.dir/build.make CMakeFiles/test_reduction.dir/depend
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_reduction.dir/build.make CMakeFiles/test_reduction.dir/build
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --progress-dir=/home/gm_ymlin/CUDA-Kernel-Optimization-Playground/build/CMakeFiles --progress-num=6,7,8,9,10 "Built target test_reduction"
+.PHONY : CMakeFiles/test_reduction.dir/all
+
+# Build rule for subdir invocation for target.
+CMakeFiles/test_reduction.dir/rule: cmake_check_build_system
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/gm_ymlin/CUDA-Kernel-Optimization-Playground/build/CMakeFiles 5
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/test_reduction.dir/all
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/gm_ymlin/CUDA-Kernel-Optimization-Playground/build/CMakeFiles 0
+.PHONY : CMakeFiles/test_reduction.dir/rule
+
+# Convenience name for target.
+test_reduction: CMakeFiles/test_reduction.dir/rule
+.PHONY : test_reduction
+
+# clean rule for target.
+CMakeFiles/test_reduction.dir/clean:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_reduction.dir/build.make CMakeFiles/test_reduction.dir/clean
+.PHONY : CMakeFiles/test_reduction.dir/clean
 
 #=============================================================================
 # Special targets to cleanup operation of make.

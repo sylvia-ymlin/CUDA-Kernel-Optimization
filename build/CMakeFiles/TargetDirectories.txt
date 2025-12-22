@@ -1,3 +1,4 @@
 /home/gm_ymlin/CUDA-Kernel-Optimization-Playground/build/CMakeFiles/test_elementwise.dir
+/home/gm_ymlin/CUDA-Kernel-Optimization-Playground/build/CMakeFiles/test_reduction.dir
 /home/gm_ymlin/CUDA-Kernel-Optimization-Playground/build/CMakeFiles/edit_cache.dir
 /home/gm_ymlin/CUDA-Kernel-Optimization-Playground/build/CMakeFiles/rebuild_cache.dir
