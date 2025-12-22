@@ -1,96 +1,101 @@
-// 向量化访存
+// SGEMM v6: Vectorized Memory Access
+// Uses float4 for coalesced 128-bit loads/stores
+// Transpose A in shared memory for better access patterns
 
-#include<cuda_runtime.h>
-#include<stdio.h>
-#include<stdlib.h>
+#include <cuda_runtime.h>
 
-template<const int BM,
-        const int BN,
-        const int BK,
-        const int TM,
-        const int TN>
+// Helper macros for vectorized access
+#define OFFSET(row, col, stride) ((row) * (stride) + (col))
+#define FETCH_FLOAT4(pointer) (reinterpret_cast<float4*>(&(pointer))[0])
+
+template<const int BM, const int BN, const int BK, const int TM, const int TN>
 __global__ void sgemm_v6(int M, int N, int K,
-    float alpha, float*A, float*B, float beta, float*C){
+    float alpha, const float *A, const float *B, float beta, float *C) {
 
+    // Block indices
     int bx = blockIdx.x;
     int by = blockIdx.y;
 
-    int block_row_thread = BN / TN;
-    int block_col_thread = BM / TM;
-    int thread_num = block_row_thread * block_col_thread;
+    // Thread position within block tile
+    int block_row_threads = BN / TN;
+    int block_col_threads = BM / TM;
+    int thread_num = block_row_threads * block_col_threads;
 
-    int tx = (threadIdx.x % block_col_thread) * TN;
-    int ty = (threadIdx.x / block_col_thread) * TM;
+    int tx = (threadIdx.x % block_row_threads) * TN;
+    int ty = (threadIdx.x / block_row_threads) * TM;
     
-    // shared memory for the tile
-    __shared__ float As[BM*BK];
-    __shared__ float Bs[BK*BN];
+    // Shared memory - A is transposed for coalesced access
+    __shared__ float s_A[BK][BM];  // Transposed
+    __shared__ float s_B[BK][BN];
 
-    // 每个线程一次搬运 4 个浮点数，搬运完 As 需要 ldg_a_num, ldg_b_num 次
+    // Vectorized loading parameters
+    // Each thread loads 4 floats at a time
     const int ldg_a_num = BK * BM / thread_num / 4;
     const int ldg_b_num = BK * BN / thread_num / 4;
 
-    int a_tile_row = threadIdx.x / (BK /4);
-    int a_tile_col = threadIdx.x % (BK /4) * 4;
+    int a_tile_row = threadIdx.x / (BK / 4);
+    int a_tile_col = (threadIdx.x % (BK / 4)) * 4;
     int a_tile_stride = BM / ldg_a_num;
 
-    int b_tile_row = threadIdx.x / (BN /4);
-    int b_tile_col = threadIdx.x % (BN /4) * 4;
-    int b_tile_stride = BN / ldg_b_num;
+    int b_tile_row = threadIdx.x / (BN / 4);
+    int b_tile_col = (threadIdx.x % (BN / 4)) * 4;
+    int b_tile_stride = BK / ldg_b_num;
 
-    float accum[TM][TN] = {0.};
-
-    float ldg_a_frag[4 * ldg_a_num] = {0.}; // 元素缓存，用于转置 As
-
+    // Accumulators in registers
+    float accum[TM][TN] = {0.0f};
+    
+    // Register caches
+    float ldg_a_reg[4 * ldg_a_num];
     float a_frag[TM];
     float b_frag[TN];
 
-    // MOVE the pointer to the start of the tile
+    // Move pointers to starting position
     A = &A[by * BM * K];
     B = &B[bx * BN];
     C = &C[by * BM * N + bx * BN];
 
-    #pragma unroll
-    for(int k = 0; k < K; k += BK){
+    // Loop over K dimension
+    for (int k = 0; k < K; k += BK) {
+        // Load A with transpose into shared memory
         #pragma unroll
-        for(int i = 0; i < BM; i += a_tile_stride){
-            int ldg_index = i / a_tile_stride * 4; 
+        for (int i = 0; i < BM; i += a_tile_stride) {
+            int ldg_index = i / a_tile_stride * 4;
+            // Load 4 floats from global A
             FETCH_FLOAT4(ldg_a_reg[ldg_index]) = 
-            FETCH_FLOAT4(A[OFFSET(a_tile_row + i, a_tile_col, K)]);
-            // As转置存，其中ldg_a_reg做中间缓存，目的是读取时可以按FLOAT4读取
-            As[OFFSET(a_tile_col, i + a_tile_row, BM)] = ldg_a_reg[ldg_index];
-            As[OFFSET(a_tile_col + 1, i + a_tile_row, BM)] = ldg_a_reg[ldg_index + 1];
-            As[OFFSET(a_tile_col + 2, i + a_tile_row, BM)] = ldg_a_reg[ldg_index + 2];
-            As[OFFSET(a_tile_col + 3, i + a_tile_row, BM)] = ldg_a_reg[ldg_index + 3];
+                FETCH_FLOAT4(A[OFFSET(a_tile_row + i, a_tile_col + k, K)]);
+            // Store transposed to shared memory
+            s_A[a_tile_col][i + a_tile_row] = ldg_a_reg[ldg_index];
+            s_A[a_tile_col + 1][i + a_tile_row] = ldg_a_reg[ldg_index + 1];
+            s_A[a_tile_col + 2][i + a_tile_row] = ldg_a_reg[ldg_index + 2];
+            s_A[a_tile_col + 3][i + a_tile_row] = ldg_a_reg[ldg_index + 3];
         }
     
-        // 搬运 Bs 到 shared memory, 不需要转置，直接搬运
+        // Load B directly (no transpose needed)
         #pragma unroll
-        for(int i = 0; i < BK; i += b_tile_stride){
-            FETCH_FLOAT4(ldg_b_reg[ldg_index]) = 
-            FETCH_FLOAT4(B[OFFSET(i + b_tile_row, b_tile_col, N)]);
+        for (int i = 0; i < BK; i += b_tile_stride) {
+            FETCH_FLOAT4(s_B[b_tile_row + i][b_tile_col]) = 
+                FETCH_FLOAT4(B[OFFSET(k + b_tile_row + i, b_tile_col, N)]);
         }
         __syncthreads();
 
-        A += BK;
-        B += BK * N;
-
+        // Compute with register caching
         #pragma unroll
-        for(int i = 0; i < BK; i){
+        for (int i = 0; i < BK; i++) {
+            // Load fragments to registers
             #pragma unroll
-            for(int m = 0; m < TM; m++){
-                FETCH_FLOAT4(a_frag[m]) = As[OFFSET(i, ty + m BM)];
+            for (int m = 0; m < TM; m += 4) {
+                FETCH_FLOAT4(a_frag[m]) = FETCH_FLOAT4(s_A[i][ty + m]);
             }
             #pragma unroll
-            for(int n = 0; n < TN; n++){
-                FETCH_FLOAT4(b_frag[n]) = Bs[OFFSET(i, tx + n, BN)];
+            for (int n = 0; n < TN; n += 4) {
+                FETCH_FLOAT4(b_frag[n]) = FETCH_FLOAT4(s_B[i][tx + n]);
             }
-            __syncthreads();
-
+            
+            // Outer product
             #pragma unroll
-            for(int m = 0; m < TM; m++){
+            for (int m = 0; m < TM; m++) {
                 #pragma unroll
-                for(int n = 0; n < TN; n++){
+                for (int n = 0; n < TN; n++) {
                     accum[m][n] += a_frag[m] * b_frag[n];
                 }
             }
@@ -98,21 +103,21 @@ __global__ void sgemm_v6(int M, int N, int K,
         __syncthreads();
     }
 
+    // Write results back with vectorized stores
     #pragma unroll
-    for(int m = 0; m < TM; m++){
+    for (int m = 0; m < TM; m++) {
         #pragma unroll
-        for(int n = 0; n < TN; n++){
-            float ctmp = FETCH_FLOAT4(C[OFFSET(ty + m, tx + n, N)]);
-            // unroll by hand
+        for (int n = 0; n < TN; n += 4) {
+            float4 ctmp = FETCH_FLOAT4(C[OFFSET(ty + m, tx + n, N)]);
             ctmp.x = alpha * accum[m][n] + beta * ctmp.x;
-            ctmp.y = alpha * accum[m][n] + beta * ctmp.y;
-            ctmp.z = alpha * accum[m][n] + beta * ctmp.z;
-            ctmp.w = alpha * accum[m][n] + beta * ctmp.w;
+            ctmp.y = alpha * accum[m][n + 1] + beta * ctmp.y;
+            ctmp.z = alpha * accum[m][n + 2] + beta * ctmp.z;
+            ctmp.w = alpha * accum[m][n + 3] + beta * ctmp.w;
             FETCH_FLOAT4(C[OFFSET(ty + m, tx + n, N)]) = ctmp;
         }
     }
 }
 
-// a template with recommended parameters
+// Explicit template instantiation
 template __global__ void sgemm_v6<128, 128, 8, 8, 8>(int M, int N, int K,
-    float alpha, float*A, float*B, float beta, float*C);
+    float alpha, const float *A, const float *B, float beta, float *C);

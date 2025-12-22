@@ -1,67 +1,69 @@
-// use shared memory, tile the matrix
-// faster access, and reduce the global memory access depending on the Tile Size
-// here we tile the matrix based on the block size
+// SGEMM v2: Shared memory tiling
+// Use shared memory to reduce global memory access
+// Tile size matches block size
 
-#include<cuda_runtime.h>
-#include<stdio.h>
-#include<stdlib.h>
+#include <cuda_runtime.h>
 
 template<const int TILE_SIZE>
 __global__ void sgemm_v2(int M, int N, int K, 
-    float alpha, float*A, float*B, float beta, float*C){
+    float alpha, const float *A, const float *B, float beta, float *C) {
 
-    const int BM = BLOCK_SIZE;
-    const int BN = BLOCK_SIZE;
-    const int BK = BLOCK_SIZE;
-
-    // block id and thread id
+    // block and thread indices
     int bx = blockIdx.x;
     int by = blockIdx.y;
     int tx = threadIdx.x;
     int ty = threadIdx.y;
 
     // allocate shared memory for the tile
-    __shared__ float s_A[BM][BK];
-    __shared__ float s_B[BK][BN];
+    __shared__ float s_A[TILE_SIZE][TILE_SIZE];
+    __shared__ float s_B[TILE_SIZE][TILE_SIZE];
 
-    // move the pointer to the start of the tile
-    A = &A[by * BM * K];
-    B = &B[bx * BN * K];
-    C = &C[by * BM * N + bx * BN * N];
+    // global row and column indices
+    int row = by * TILE_SIZE + ty;
+    int col = bx * TILE_SIZE + tx;
 
-    float temp = 0.0;
-    // 滑动窗口
-    for(int k = 0; k < K, k += BK){
-        As[ty * BK + tx] = A[ty * BK + tx];
-        Bs[ty * BK + tx] = B[ty * BK + tx];
+    float temp = 0.0f;
+    
+    // loop over tiles
+    for (int k = 0; k < K; k += TILE_SIZE) {
+        // load data to shared memory with bounds checking
+        if (row < M && (k + tx) < K) {
+            s_A[ty][tx] = A[row * K + k + tx];
+        } else {
+            s_A[ty][tx] = 0.0f;
+        }
+        
+        if ((k + ty) < K && col < N) {
+            s_B[ty][tx] = B[(k + ty) * N + col];
+        } else {
+            s_B[ty][tx] = 0.0f;
+        }
         __syncthreads();
 
-        // move to next block
-        A += BK;
-        B += BK * N;
-        // calculate the dot product
-        for(int i = 0; i < BK; i++){
-            tmp += As[ty * BK + i] * Bs[i * BN + tx];
+        // calculate the dot product for this tile
+        #pragma unroll
+        for (int i = 0; i < TILE_SIZE; i++) {
+            temp += s_A[ty][i] * s_B[i][tx];
         }
-        __syncthreads(); // make sure all threads finish the calculation
+        __syncthreads();
     }
 
-    // 遍历完所有窗口，结果写回全局内存
-    C[ty * N + tx] = alpha * temp + beta * C[ty * N + tx];
+    // write result to global memory
+    if (row < M && col < N) {
+        C[row * N + col] = alpha * temp + beta * C[row * N + col];
+    }
 }
 
-// template for different parameters, block size
+// Explicit template instantiations
 template __global__ void sgemm_v2<16>(int M, int N, int K, 
-    float alpha, float*A, float*B, float beta, float*C);
+    float alpha, const float *A, const float *B, float beta, float *C);
 
 template __global__ void sgemm_v2<32>(int M, int N, int K, 
-    float alpha, float*A, float*B, float beta, float*C);
+    float alpha, const float *A, const float *B, float beta, float *C);
 
-template __global__ void sgemm_v2<64>(int M, int N, int K, 
-    float alpha, float*A, float*B, float beta, float*C);
-
-/**
- * 读取全局内存的次数会随 block 的尺寸成倍缩小
- * 但是每个block 能分配的 shared memory 空间也会成倍缩小
- * 需要权衡 block 尺寸和 shared memory 空间
+/*
+ * Analysis:
+ * - Global memory reads reduced by factor of TILE_SIZE
+ * - Each element in shared memory used TILE_SIZE times
+ * - Block size limited by shared memory availability
  */

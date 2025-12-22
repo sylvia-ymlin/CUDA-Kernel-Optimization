@@ -1,80 +1,95 @@
-// thread tile and registers
-// 一个线程计算 block 中多个元素
-// 定义 tmp 缓存用于计算的元素
+// SGEMM v3: 1D Thread Tiling
+// Each thread computes TM elements (a column of the output tile)
+// Uses registers to cache intermediate results
 
-#include<cuda_runtime.h>
-#include<stdio.h>
-#include<stdlib.h>
+#include <cuda_runtime.h>
 
-template<const int BM,
-        const int BN,
-        const int BK,
-        const int TM>
+template<const int BM, const int BN, const int BK, const int TM>
 __global__ void sgemm_v3(int M, int N, int K,
-    float alpha, float*A, float*B, float beta, float*C){
+    float alpha, const float *A, const float *B, float beta, float *C) {
     
+    // Block indices
     int bx = blockIdx.x;
     int by = blockIdx.y;
-    int thread_num = BM * BN / TM; // TM defines the number of elements a thread computes
     
-    int tx = threadIdx.x % BN;
-    int ty = threadIdx.x / BN * TM;
+    // Thread responsible for TM elements in a column
+    int tx = threadIdx.x % BN;           // column within block
+    int ty = (threadIdx.x / BN) * TM;    // starting row within block
 
-    // allocate shared memory for the tile
+    // Shared memory for tiles
     __shared__ float s_A[BM][BK];
     __shared__ float s_B[BK][BN];
 
-    // move the pointer to the start of the tile
-    A = &A[by * BM * K];
-    B = &B[bx * BN * K];
-    C = &C[by * BM * N + bx * BN * N];
+    // Global starting positions
+    int A_start = by * BM * K;
+    int B_start = bx * BN;
+    int C_start = by * BM * N + bx * BN;
 
+    // Thread info for loading A
+    int thread_num = (BM * BN) / TM;
     int a_tile_row = threadIdx.x / BK;
-    int b_tile_col = threadIdx.x % BK;
-    int a_tile_stride = threadIdx.x / BK;
+    int a_tile_col = threadIdx.x % BK;
+    int a_tile_stride = thread_num / BK;
 
+    // Thread info for loading B
     int b_tile_row = threadIdx.x / BN;
     int b_tile_col = threadIdx.x % BN;
-    int b_tile_stride = threadIdx.x / BN;
+    int b_tile_stride = thread_num / BN;
 
-    // allocate the registers for the tile
-    // each thread is responsible for TM elements, one for case
-    float tmp[TM +1] = {0.}
-    // load data to shared memory
-    #pragma unroll
-    for(int k = 0; k < K; k += BK){ // loop over columns or rows, since one element is still calculated by the same thread
+    // Register array for output (each thread computes TM elements)
+    float tmp[TM] = {0.0f};
+
+    // Loop over K dimension in tiles
+    for (int k = 0; k < K; k += BK) {
+        // Load A tile to shared memory
         #pragma unroll
-        for(int i = 0; i < BM; i += a_tile_stride){
-            As[(a_tile_row + i) * BK + a_tile_col] = A[(a_tile_row + i) * K + a_tile_col];
+        for (int i = 0; i < BM; i += a_tile_stride) {
+            int a_row = a_tile_row + i;
+            if (by * BM + a_row < M && k + a_tile_col < K) {
+                s_A[a_row][a_tile_col] = A[A_start + a_row * K + k + a_tile_col];
+            } else {
+                s_A[a_row][a_tile_col] = 0.0f;
+            }
         }
+        
+        // Load B tile to shared memory
         #pragma unroll
-        for(int i = 0; i < BN; i += b_tile_stride){
-            Bs[(b_tile_row + i) * BN + b_tile_col] = B[(b_tile_row + i) * N + b_tile_col];
+        for (int i = 0; i < BK; i += b_tile_stride) {
+            int b_row = b_tile_row + i;
+            if (k + b_row < K && bx * BN + b_tile_col < N) {
+                s_B[b_row][b_tile_col] = B[(k + b_row) * N + B_start + b_tile_col];
+            } else {
+                s_B[b_row][b_tile_col] = 0.0f;
+            }
         }
         __syncthreads();
 
-        // move the pointer to the next tile
-        A += BK;
-        B += BK * N;
-
-        // case to register
+        // Compute partial results
         #pragma unroll
-        for(int i = 0; i < BK; i++){
-            tmp[TM] = Bs[tx + i * BN];
+        for (int i = 0; i < BK; i++) {
+            float b_val = s_B[i][tx];
             #pragma unroll
-            for(int i = 0l j < TM; j++){
-                tmp[j] += As[(ty + j) * BK + i] * tmp[TM];
+            for (int j = 0; j < TM; j++) {
+                tmp[j] += s_A[ty + j][i] * b_val;
             }
         }
-        __syncthreads(); // block level synchronization
+        __syncthreads();
     }
 
-
-    # write the TM elements to the global memory
+    // Write results to global memory
     #pragma unroll
-    for(int j = 0; j < TM; j++){
-        C[(ty + j) * N + tx] = alpha * tmp[i] + beta * C[(ty + j) * N + tx];
+    for (int j = 0; j < TM; j++) {
+        int global_row = by * BM + ty + j;
+        int global_col = bx * BN + tx;
+        if (global_row < M && global_col < N) {
+            C[global_row * N + global_col] = alpha * tmp[j] + beta * C[global_row * N + global_col];
+        }
     }
 }
 
-template __global__ void sgemm_v3<64, 64, 8, 8>(int M, int N, int K, float alpha, float *A, float *B, float beta, float *C);
+// Explicit template instantiation
+template __global__ void sgemm_v3<64, 64, 8, 8>(int M, int N, int K, 
+    float alpha, const float *A, const float *B, float beta, float *C);
+
+template __global__ void sgemm_v3<128, 128, 8, 8>(int M, int N, int K, 
+    float alpha, const float *A, const float *B, float beta, float *C);

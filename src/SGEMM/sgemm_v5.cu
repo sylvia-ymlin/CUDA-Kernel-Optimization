@@ -1,91 +1,120 @@
-// 2D thread tile and registers
+// SGEMM v5: 2D Thread Tiling with Register Caching
+// Cache A and B fragments in registers before computation
+// Reduces shared memory access
 
-#include<cuda_runtime.h>
-#include<stdio.h>
-#include<stdlib.h>
+#include <cuda_runtime.h>
 
-template<const int BM,
-        const int BN,
-        const int BK,
-        const int TM,
-        const int TN>
+template<const int BM, const int BN, const int BK, const int TM, const int TN>
 __global__ void sgemm_v5(int M, int N, int K,
-    float alpha, float*A, float*B, float beta, float*C){
+    float alpha, const float *A, const float *B, float beta, float *C) {
     
+    // Block indices
     int bx = blockIdx.x;
     int by = blockIdx.y;
     
-    int block_row_thread = BN / TN;
-    int block_col_thread = BM / TM;
-    int thread_num = block_row_thread * block_col_thread;
+    // Calculate thread position within the block
+    int block_row_threads = BN / TN;
+    int block_col_threads = BM / TM;
+    int thread_num = block_row_threads * block_col_threads;
     
-    int tx = (threadIdx.x % block_col_thread) * TN;
-    int ty = (threadIdx.x / block_col_thread) * TM;
+    // Thread tile position
+    int tx = (threadIdx.x % block_row_threads) * TN;  // column offset
+    int ty = (threadIdx.x / block_row_threads) * TM;  // row offset
 
-    // shared memory for the tile
-    __shared__ float As[BM*BK];
-    __shared__ float Bs[BK*BN];
+    // Shared memory for tiles
+    __shared__ float s_A[BM][BK];
+    __shared__ float s_B[BK][BN];
 
-    // move the pointer to the start of the tile
-    A = &A[by * BM * K];
-    B = &B[bx * BN];
-    C = &C[by * BM * N + bx * BN];
-
+    // Thread info for loading A
     int a_tile_row = threadIdx.x / BK;
     int a_tile_col = threadIdx.x % BK;
-    int a_tile_stride = threadIdx.x / BK;
+    int a_tile_stride = thread_num / BK;
 
+    // Thread info for loading B
     int b_tile_row = threadIdx.x / BN;
     int b_tile_col = threadIdx.x % BN;
-    int b_tile_stride = threadIdx.x / BN;
+    int b_tile_stride = thread_num / BN;
 
-    float tmp[TM][TN] = {0.};
-    float a_frag[TM] = {0.};
-    float b_frag[TN] = {0.};
+    // Register arrays
+    float tmp[TM][TN] = {0.0f};  // output accumulator
+    float a_frag[TM];            // A fragment cache
+    float b_frag[TN];            // B fragment cache
 
-    #pragma unroll
-    for(int k = 0; k < K; k += BK){
+    // Loop over K dimension in tiles
+    for (int k = 0; k < K; k += BK) {
+        // Load A tile to shared memory
         #pragma unroll
-        for(int i = 0; i < BM; i += a_tile_stride){
-            As[(a_tile_row + i) * BK + a_tile_col] = A[(a_tile_row + i) * K + a_tile_col];
+        for (int i = 0; i < BM; i += a_tile_stride) {
+            int a_row = a_tile_row + i;
+            if (a_row < BM) {
+                int global_row = by * BM + a_row;
+                int global_col = k + a_tile_col;
+                if (global_row < M && global_col < K) {
+                    s_A[a_row][a_tile_col] = A[global_row * K + global_col];
+                } else {
+                    s_A[a_row][a_tile_col] = 0.0f;
+                }
+            }
         }
+        
+        // Load B tile to shared memory
         #pragma unroll
-        for(int i = 0; i < BN; i += b_tile_stride){
-            Bs[(b_tile_row + i) * BN + b_tile_col] = B[(b_tile_row + i) * N + b_tile_col];
+        for (int i = 0; i < BK; i += b_tile_stride) {
+            int b_row = b_tile_row + i;
+            if (b_row < BK) {
+                int global_row = k + b_row;
+                int global_col = bx * BN + b_tile_col;
+                if (global_row < K && global_col < N) {
+                    s_B[b_row][b_tile_col] = B[global_row * N + global_col];
+                } else {
+                    s_B[b_row][b_tile_col] = 0.0f;
+                }
+            }
         }
         __syncthreads();
 
-        A += BK;
-        B += BK * N;
-
-        // cache to registers
+        // Compute with register caching
         #pragma unroll
-        for(int i = 0; i < BK; i++){
+        for (int i = 0; i < BK; i++) {
+            // Load A fragment to registers
             #pragma unroll
-            for(int j = 0; k < TM; j++){
-                a_frag[j] = As[(ty + j) * BK + i];
+            for (int m = 0; m < TM; m++) {
+                a_frag[m] = s_A[ty + m][i];
             }
+            // Load B fragment to registers
             #pragma unroll
-            for(int j = 0; k < TN; j++){
-                b_frag[j] = Bs[i * BN + tx + j];
+            for (int n = 0; n < TN; n++) {
+                b_frag[n] = s_B[i][tx + n];
             }
-            // calculate for the 2D tile
-            for(int i = 0; i < TM; i++){
-                for(int j = 0; j < TN; j++){
-                    tmp[i][j] += a_frag[i] * b_frag[j];
+            // Compute outer product
+            #pragma unroll
+            for (int m = 0; m < TM; m++) {
+                #pragma unroll
+                for (int n = 0; n < TN; n++) {
+                    tmp[m][n] += a_frag[m] * b_frag[n];
                 }
             }
-            __syncthreads();
         }
+        __syncthreads();
     }
 
-    // write the result to the global memory
+    // Write results to global memory
     #pragma unroll
-    for(int j = 0; j < TM; j++){
-        for(int l = 0; l < TN; l++){
-            C[(ty + j) * N + tx + l] = alpha * tmp[j][l] + beta * C[(ty + j) * N + tx + l];
+    for (int m = 0; m < TM; m++) {
+        #pragma unroll
+        for (int n = 0; n < TN; n++) {
+            int global_row = by * BM + ty + m;
+            int global_col = bx * BN + tx + n;
+            if (global_row < M && global_col < N) {
+                C[global_row * N + global_col] = alpha * tmp[m][n] + beta * C[global_row * N + global_col];
+            }
         }
     }
 }
 
-template __global__ void sgemm_v5<128, 128, 8, 8, 8>(int M, int N, int K, float alpha, float *A, float *B, float beta, float *C);
+// Explicit template instantiation
+template __global__ void sgemm_v5<64, 64, 8, 8, 8>(int M, int N, int K, 
+    float alpha, const float *A, const float *B, float beta, float *C);
+
+template __global__ void sgemm_v5<128, 128, 8, 8, 8>(int M, int N, int K, 
+    float alpha, const float *A, const float *B, float beta, float *C);
