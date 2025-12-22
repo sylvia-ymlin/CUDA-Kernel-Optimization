@@ -18,9 +18,8 @@ __global__ void sgemm_v6(int M, int N, int K,
     int by = blockIdx.y;
 
     // Thread position within block tile
-    int block_row_threads = BN / TN;
-    int block_col_threads = BM / TM;
-    int thread_num = block_row_threads * block_col_threads;
+    constexpr int block_row_threads = BN / TN;
+    constexpr int block_col_threads = BM / TM;
 
     int tx = (threadIdx.x % block_row_threads) * TN;
     int ty = (threadIdx.x / block_row_threads) * TM;
