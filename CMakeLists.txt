@@ -38,3 +38,19 @@ target_include_directories(test_reduction PRIVATE
 set_target_properties(test_reduction PROPERTIES 
     CUDA_SEPARABLE_COMPILATION ON
 )
+
+# Softmax test binary
+add_executable(test_softmax
+    tests/test_softmax.cu
+    src/reduce/reduce_softmax.cu
+    src/reduce/reduce_softmax_matrix.cu
+    src/reduce/reduce_max.cu
+)
+
+target_include_directories(test_softmax PRIVATE
+    src/reduce
+)
+
+set_target_properties(test_softmax PROPERTIES 
+    CUDA_SEPARABLE_COMPILATION ON
+)

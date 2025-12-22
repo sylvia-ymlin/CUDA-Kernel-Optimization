@@ -16,6 +16,8 @@ __global__ void setToNegativeMax(float* d_value);
 __global__ void sum_kernel(float* input, float* sum, float* max_val, int N);
 __global__ void softmax_kernel(float* input, float* output, float* sum, float* max_val, int N);
 
+// Note: sum_kernel computes sum of exp(input[i] - max_val) internally
+
 // Softmax (matrix versions in reduce_softmax_matrix.cu)
 __global__ void softmax_row_kernel(float* input, float* output, int M, int N);
 __global__ void softmax_row_kernel_shfl_xor(float* input, float* output, int M, int N);
