@@ -9,6 +9,8 @@ set(CMAKE_DEPENDS_LANGUAGES
 # The set of dependency files which are needed:
 set(CMAKE_DEPENDS_DEPENDENCY_FILES
   "/home/gm_ymlin/CUDA-Kernel-Optimization-Playground/src/reduce/reduce_max.cu" "CMakeFiles/test_reduction.dir/src/reduce/reduce_max.cu.o" "gcc" "CMakeFiles/test_reduction.dir/src/reduce/reduce_max.cu.o.d"
+  "/home/gm_ymlin/CUDA-Kernel-Optimization-Playground/src/reduce/reduce_softmax.cu" "CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax.cu.o" "gcc" "CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax.cu.o.d"
+  "/home/gm_ymlin/CUDA-Kernel-Optimization-Playground/src/reduce/reduce_softmax_matrix.cu" "CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax_matrix.cu.o" "gcc" "CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax_matrix.cu.o.d"
   "/home/gm_ymlin/CUDA-Kernel-Optimization-Playground/src/reduce/reduce_sum.cu" "CMakeFiles/test_reduction.dir/src/reduce/reduce_sum.cu.o" "gcc" "CMakeFiles/test_reduction.dir/src/reduce/reduce_sum.cu.o.d"
   "/home/gm_ymlin/CUDA-Kernel-Optimization-Playground/tests/test_reduction.cu" "CMakeFiles/test_reduction.dir/tests/test_reduction.cu.o" "gcc" "CMakeFiles/test_reduction.dir/tests/test_reduction.cu.o.d"
   )

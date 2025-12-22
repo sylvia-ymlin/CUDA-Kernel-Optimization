@@ -111,11 +111,41 @@ CMakeFiles/test_reduction.dir/src/reduce/reduce_max.cu.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CUDA source to assembly CMakeFiles/test_reduction.dir/src/reduce/reduce_max.cu.s"
 	$(CMAKE_COMMAND) -E cmake_unimplemented_variable CMAKE_CUDA_CREATE_ASSEMBLY_SOURCE
 
+CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax.cu.o: CMakeFiles/test_reduction.dir/flags.make
+CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax.cu.o: ../src/reduce/reduce_softmax.cu
+CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax.cu.o: CMakeFiles/test_reduction.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/home/gm_ymlin/CUDA-Kernel-Optimization-Playground/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_4) "Building CUDA object CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax.cu.o"
+	/mnt/cuda_disk/usr/local/cuda-12.1/bin/nvcc -forward-unknown-to-host-compiler $(CUDA_DEFINES) $(CUDA_INCLUDES) $(CUDA_FLAGS) -MD -MT CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax.cu.o -MF CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax.cu.o.d -x cu -dc /home/gm_ymlin/CUDA-Kernel-Optimization-Playground/src/reduce/reduce_softmax.cu -o CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax.cu.o
+
+CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax.cu.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Preprocessing CUDA source to CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax.cu.i"
+	$(CMAKE_COMMAND) -E cmake_unimplemented_variable CMAKE_CUDA_CREATE_PREPROCESSED_SOURCE
+
+CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax.cu.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CUDA source to assembly CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax.cu.s"
+	$(CMAKE_COMMAND) -E cmake_unimplemented_variable CMAKE_CUDA_CREATE_ASSEMBLY_SOURCE
+
+CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax_matrix.cu.o: CMakeFiles/test_reduction.dir/flags.make
+CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax_matrix.cu.o: ../src/reduce/reduce_softmax_matrix.cu
+CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax_matrix.cu.o: CMakeFiles/test_reduction.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/home/gm_ymlin/CUDA-Kernel-Optimization-Playground/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_5) "Building CUDA object CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax_matrix.cu.o"
+	/mnt/cuda_disk/usr/local/cuda-12.1/bin/nvcc -forward-unknown-to-host-compiler $(CUDA_DEFINES) $(CUDA_INCLUDES) $(CUDA_FLAGS) -MD -MT CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax_matrix.cu.o -MF CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax_matrix.cu.o.d -x cu -dc /home/gm_ymlin/CUDA-Kernel-Optimization-Playground/src/reduce/reduce_softmax_matrix.cu -o CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax_matrix.cu.o
+
+CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax_matrix.cu.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Preprocessing CUDA source to CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax_matrix.cu.i"
+	$(CMAKE_COMMAND) -E cmake_unimplemented_variable CMAKE_CUDA_CREATE_PREPROCESSED_SOURCE
+
+CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax_matrix.cu.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CUDA source to assembly CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax_matrix.cu.s"
+	$(CMAKE_COMMAND) -E cmake_unimplemented_variable CMAKE_CUDA_CREATE_ASSEMBLY_SOURCE
+
 # Object files for target test_reduction
 test_reduction_OBJECTS = \
 "CMakeFiles/test_reduction.dir/tests/test_reduction.cu.o" \
 "CMakeFiles/test_reduction.dir/src/reduce/reduce_sum.cu.o" \
-"CMakeFiles/test_reduction.dir/src/reduce/reduce_max.cu.o"
+"CMakeFiles/test_reduction.dir/src/reduce/reduce_max.cu.o" \
+"CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax.cu.o" \
+"CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax_matrix.cu.o"
 
 # External object files for target test_reduction
 test_reduction_EXTERNAL_OBJECTS =
@@ -123,9 +153,11 @@ test_reduction_EXTERNAL_OBJECTS =
 CMakeFiles/test_reduction.dir/cmake_device_link.o: CMakeFiles/test_reduction.dir/tests/test_reduction.cu.o
 CMakeFiles/test_reduction.dir/cmake_device_link.o: CMakeFiles/test_reduction.dir/src/reduce/reduce_sum.cu.o
 CMakeFiles/test_reduction.dir/cmake_device_link.o: CMakeFiles/test_reduction.dir/src/reduce/reduce_max.cu.o
+CMakeFiles/test_reduction.dir/cmake_device_link.o: CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax.cu.o
+CMakeFiles/test_reduction.dir/cmake_device_link.o: CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax_matrix.cu.o
 CMakeFiles/test_reduction.dir/cmake_device_link.o: CMakeFiles/test_reduction.dir/build.make
 CMakeFiles/test_reduction.dir/cmake_device_link.o: CMakeFiles/test_reduction.dir/dlink.txt
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --bold --progress-dir=/home/gm_ymlin/CUDA-Kernel-Optimization-Playground/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_4) "Linking CUDA device code CMakeFiles/test_reduction.dir/cmake_device_link.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --bold --progress-dir=/home/gm_ymlin/CUDA-Kernel-Optimization-Playground/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_6) "Linking CUDA device code CMakeFiles/test_reduction.dir/cmake_device_link.o"
 	$(CMAKE_COMMAND) -E cmake_link_script CMakeFiles/test_reduction.dir/dlink.txt --verbose=$(VERBOSE)
 
 # Rule to build all files generated by this target.
@@ -136,7 +168,9 @@ CMakeFiles/test_reduction.dir/build: CMakeFiles/test_reduction.dir/cmake_device_
 test_reduction_OBJECTS = \
 "CMakeFiles/test_reduction.dir/tests/test_reduction.cu.o" \
 "CMakeFiles/test_reduction.dir/src/reduce/reduce_sum.cu.o" \
-"CMakeFiles/test_reduction.dir/src/reduce/reduce_max.cu.o"
+"CMakeFiles/test_reduction.dir/src/reduce/reduce_max.cu.o" \
+"CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax.cu.o" \
+"CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax_matrix.cu.o"
 
 # External object files for target test_reduction
 test_reduction_EXTERNAL_OBJECTS =
@@ -144,10 +178,12 @@ test_reduction_EXTERNAL_OBJECTS =
 test_reduction: CMakeFiles/test_reduction.dir/tests/test_reduction.cu.o
 test_reduction: CMakeFiles/test_reduction.dir/src/reduce/reduce_sum.cu.o
 test_reduction: CMakeFiles/test_reduction.dir/src/reduce/reduce_max.cu.o
+test_reduction: CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax.cu.o
+test_reduction: CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax_matrix.cu.o
 test_reduction: CMakeFiles/test_reduction.dir/build.make
 test_reduction: CMakeFiles/test_reduction.dir/cmake_device_link.o
 test_reduction: CMakeFiles/test_reduction.dir/link.txt
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --bold --progress-dir=/home/gm_ymlin/CUDA-Kernel-Optimization-Playground/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_5) "Linking CUDA executable test_reduction"
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --bold --progress-dir=/home/gm_ymlin/CUDA-Kernel-Optimization-Playground/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_7) "Linking CUDA executable test_reduction"
 	$(CMAKE_COMMAND) -E cmake_link_script CMakeFiles/test_reduction.dir/link.txt --verbose=$(VERBOSE)
 
 # Rule to build all files generated by this target.

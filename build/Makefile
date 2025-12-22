@@ -214,6 +214,54 @@ src/reduce/reduce_max.cu.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_reduction.dir/build.make CMakeFiles/test_reduction.dir/src/reduce/reduce_max.cu.s
 .PHONY : src/reduce/reduce_max.cu.s
 
+src/reduce/reduce_softmax.o: src/reduce/reduce_softmax.cu.o
+.PHONY : src/reduce/reduce_softmax.o
+
+# target to build an object file
+src/reduce/reduce_softmax.cu.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_reduction.dir/build.make CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax.cu.o
+.PHONY : src/reduce/reduce_softmax.cu.o
+
+src/reduce/reduce_softmax.i: src/reduce/reduce_softmax.cu.i
+.PHONY : src/reduce/reduce_softmax.i
+
+# target to preprocess a source file
+src/reduce/reduce_softmax.cu.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_reduction.dir/build.make CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax.cu.i
+.PHONY : src/reduce/reduce_softmax.cu.i
+
+src/reduce/reduce_softmax.s: src/reduce/reduce_softmax.cu.s
+.PHONY : src/reduce/reduce_softmax.s
+
+# target to generate assembly for a file
+src/reduce/reduce_softmax.cu.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_reduction.dir/build.make CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax.cu.s
+.PHONY : src/reduce/reduce_softmax.cu.s
+
+src/reduce/reduce_softmax_matrix.o: src/reduce/reduce_softmax_matrix.cu.o
+.PHONY : src/reduce/reduce_softmax_matrix.o
+
+# target to build an object file
+src/reduce/reduce_softmax_matrix.cu.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_reduction.dir/build.make CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax_matrix.cu.o
+.PHONY : src/reduce/reduce_softmax_matrix.cu.o
+
+src/reduce/reduce_softmax_matrix.i: src/reduce/reduce_softmax_matrix.cu.i
+.PHONY : src/reduce/reduce_softmax_matrix.i
+
+# target to preprocess a source file
+src/reduce/reduce_softmax_matrix.cu.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_reduction.dir/build.make CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax_matrix.cu.i
+.PHONY : src/reduce/reduce_softmax_matrix.cu.i
+
+src/reduce/reduce_softmax_matrix.s: src/reduce/reduce_softmax_matrix.cu.s
+.PHONY : src/reduce/reduce_softmax_matrix.s
+
+# target to generate assembly for a file
+src/reduce/reduce_softmax_matrix.cu.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_reduction.dir/build.make CMakeFiles/test_reduction.dir/src/reduce/reduce_softmax_matrix.cu.s
+.PHONY : src/reduce/reduce_softmax_matrix.cu.s
+
 src/reduce/reduce_sum.o: src/reduce/reduce_sum.cu.o
 .PHONY : src/reduce/reduce_sum.o
 
@@ -305,6 +353,12 @@ help:
 	@echo "... src/reduce/reduce_max.o"
 	@echo "... src/reduce/reduce_max.i"
 	@echo "... src/reduce/reduce_max.s"
+	@echo "... src/reduce/reduce_softmax.o"
+	@echo "... src/reduce/reduce_softmax.i"
+	@echo "... src/reduce/reduce_softmax.s"
+	@echo "... src/reduce/reduce_softmax_matrix.o"
+	@echo "... src/reduce/reduce_softmax_matrix.i"
+	@echo "... src/reduce/reduce_softmax_matrix.s"
 	@echo "... src/reduce/reduce_sum.o"
 	@echo "... src/reduce/reduce_sum.i"
 	@echo "... src/reduce/reduce_sum.s"
