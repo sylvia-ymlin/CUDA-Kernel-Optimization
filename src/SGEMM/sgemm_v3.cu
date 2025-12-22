@@ -41,7 +41,7 @@ __global__ void sgemm_v3(int M, int N, int K,
         for (int i = 0; i < BM; i += a_tile_stride) {
             int a_row = a_tile_row + i;
             if (by * BM + a_row < M && k + a_tile_col < K) {
-                s_A[a_row][a_tile_col] = A[A_start + a_row * K + k + a_tile_col];
+                s_A[a_row][a_tile_col] = A[(by * BM + a_row) * K + k + a_tile_col];
             } else {
                 s_A[a_row][a_tile_col] = 0.0f;
             }
@@ -52,7 +52,7 @@ __global__ void sgemm_v3(int M, int N, int K,
         for (int i = 0; i < BK; i += b_tile_stride) {
             int b_row = b_tile_row + i;
             if (k + b_row < K && bx * BN + b_tile_col < N) {
-                s_B[b_row][b_tile_col] = B[(k + b_row) * N + B_start + b_tile_col];
+                s_B[b_row][b_tile_col] = B[(k + b_row) * N + bx * BN + b_tile_col];
             } else {
                 s_B[b_row][b_tile_col] = 0.0f;
             }
