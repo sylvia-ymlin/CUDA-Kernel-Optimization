@@ -7,6 +7,7 @@
 // Helper macros
 #define OFFSET(row, col, stride) ((row) * (stride) + (col))
 #define FETCH_FLOAT4(pointer) (reinterpret_cast<float4*>(&(pointer))[0])
+#define FETCH_FLOAT4_CONST(pointer) (reinterpret_cast<const float4*>(&(pointer))[0])
 
 template<const int BM, const int BN, const int BK, const int TM, const int TN>
 __global__ void sgemm_v7(int M, int N, int K,
@@ -57,7 +58,7 @@ __global__ void sgemm_v7(int M, int N, int K,
     for (int i = 0; i < BM; i += a_tile_stride) {
         int ldg_index = i / a_tile_stride * 4;
         FETCH_FLOAT4(ldg_a_reg[ldg_index]) =
-            FETCH_FLOAT4(A[OFFSET(a_tile_row + i, a_tile_col, K)]);
+            FETCH_FLOAT4_CONST(A[OFFSET(a_tile_row + i, a_tile_col, K)]);
         s_A[0][a_tile_col][i + a_tile_row] = ldg_a_reg[ldg_index];
         s_A[0][a_tile_col + 1][i + a_tile_row] = ldg_a_reg[ldg_index + 1];
         s_A[0][a_tile_col + 2][i + a_tile_row] = ldg_a_reg[ldg_index + 2];
@@ -66,7 +67,7 @@ __global__ void sgemm_v7(int M, int N, int K,
     #pragma unroll
     for (int i = 0; i < BK; i += b_tile_stride) {
         FETCH_FLOAT4(s_B[0][b_tile_row + i][b_tile_col]) =
-            FETCH_FLOAT4(B[OFFSET(b_tile_row + i, b_tile_col, N)]);
+            FETCH_FLOAT4_CONST(B[OFFSET(b_tile_row + i, b_tile_col, N)]);
     }
     __syncthreads();
 
@@ -81,13 +82,13 @@ __global__ void sgemm_v7(int M, int N, int K,
             for (int i = 0; i < BM; i += a_tile_stride) {
                 int ldg_index = i / a_tile_stride * 4;
                 FETCH_FLOAT4(ldg_a_reg[ldg_index]) =
-                    FETCH_FLOAT4(A[OFFSET(a_tile_row + i, a_tile_col + k, K)]);
+                    FETCH_FLOAT4_CONST(A[OFFSET(a_tile_row + i, a_tile_col + k, K)]);
             }
             #pragma unroll
             for (int i = 0; i < BK; i += b_tile_stride) {
                 int ldg_index = i / b_tile_stride * 4;
                 FETCH_FLOAT4(ldg_b_reg[ldg_index]) =
-                    FETCH_FLOAT4(B[OFFSET(k + b_tile_row + i, b_tile_col, N)]);
+                    FETCH_FLOAT4_CONST(B[OFFSET(k + b_tile_row + i, b_tile_col, N)]);
             }
         }
 

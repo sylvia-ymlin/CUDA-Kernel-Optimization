@@ -25,11 +25,6 @@ __global__ void sgemm_v4(int M, int N, int K,
     __shared__ float s_A[BM][BK];
     __shared__ float s_B[BK][BN];
 
-    // Global starting positions
-    int A_start = by * BM * K;
-    int B_start = bx * BN;
-    int C_start = by * BM * N + bx * BN;
-
     // Thread info for loading A
     int a_tile_row = threadIdx.x / BK;
     int a_tile_col = threadIdx.x % BK;
