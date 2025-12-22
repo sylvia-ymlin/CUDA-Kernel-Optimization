@@ -158,7 +158,7 @@ GFLOPS   │
 
 **Ceiling analysis:**
 - **Elementwise/Reduction:** Limited by DRAM bandwidth (320 GB/s), not L2 or instruction throughput. Achievable ceiling ~280-300 GB/s after ECC and memory controller overhead.
-- **Transpose:** Limited by read-write asymmetry—each element requires one strided read and one coalesced write (or vice versa). Effective ceiling ~250 GB/s even with perfect tiling.
+- **Transpose:** Limited by read-write asymmetry—each element requires one strided access and one coalesced access, preventing full bidirectional bandwidth utilization. Effective ceiling ~250 GB/s even with perfect tiling.
 - **SGEMM:** Limited by FMA throughput. High arithmetic intensity (170 FLOP/byte) means data reuse hides memory latency entirely.
 
 ## Summary
@@ -313,7 +313,7 @@ v7 reaches **82% of cuBLAS at large sizes**—the gap narrows as overhead become
 
 ---
 
-## Key Learnings
+## Empirical Conclusions
 
 These are not hypotheses—they are conclusions supported by measurement.
 
@@ -346,6 +346,25 @@ These are not hypotheses—they are conclusions supported by measurement.
 2. **All kernels:** FP16/BF16 variants (2x throughput, 2x bandwidth)
 3. **Reduction:** Multi-pass for >4B elements
 4. **Profiling:** Detailed Nsight Compute analysis for register pressure
+
+---
+
+---
+
+# Repository Structure
+
+```
+cuda-kernels-from-scratch/
+├── src/
+│   ├── elementwise/     # Vectorized add, sigmoid, relu
+│   ├── reduce/          # Sum, max, softmax reductions
+│   ├── transpose/       # Matrix transpose variants
+│   └── SGEMM/           # v1-v7 GEMM implementations
+├── tests/               # Correctness + performance benchmarks
+├── profiling/           # Nsight Compute/Systems notes
+├── CMakeLists.txt
+└── README.md
+```
 
 ---
 
