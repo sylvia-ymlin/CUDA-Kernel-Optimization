@@ -1,4 +1,5 @@
 #include <cuda_runtime.h>
+#include <cfloat>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -195,6 +196,10 @@ void test_max_kernel() {
     cudaCheck(cudaMalloc(&d_in, N * sizeof(float)));
     cudaCheck(cudaMalloc(&d_out, sizeof(float)));
     cudaCheck(cudaMemcpy(d_in, h_in, N * sizeof(float), cudaMemcpyHostToDevice));
+    
+    // Initialize output to -FLT_MAX (required for atomicMax to work correctly)
+    float neg_max = -FLT_MAX;
+    cudaCheck(cudaMemcpy(d_out, &neg_max, sizeof(float), cudaMemcpyHostToDevice));
 
     max_kernel<<<GRID, BLOCK>>>(d_in, d_out, N);
     cudaCheck(cudaGetLastError());
