@@ -956,8 +956,8 @@ void perf_scalability() {
     // Test with different sizes
     int sizes[] = {256, 512, 1024, 2048, 4096};
     
-    std::printf("Matrix Size | v2 GFLOPS | v5 GFLOPS | cuBLAS GFLOPS\n");
-    std::printf("------------|-----------|-----------|---------------\n");
+    std::printf("Matrix Size | v2 GFLOPS | v5 GFLOPS | v7 GFLOPS | cuBLAS GFLOPS\n");
+    std::printf("------------|-----------|-----------|-----------|---------------\n");
     
     for (int size : sizes) {
         int M = size, N = size, K = size;
@@ -971,6 +971,7 @@ void perf_scalability() {
         cudaEvent_t start, stop;
         cudaCheck(cudaEventCreate(&start));
         cudaCheck(cudaEventCreate(&stop));
+        float total_ms;
         
         // v2 (shared memory)
         constexpr int TILE = 32;
@@ -988,31 +989,51 @@ void perf_scalability() {
         }
         cudaCheck(cudaEventRecord(stop));
         cudaCheck(cudaEventSynchronize(stop));
-        
-        float total_ms;
         cudaCheck(cudaEventElapsedTime(&total_ms, start, stop));
         float gflops_v2 = compute_gflops(M, N, K, total_ms / ITERS);
         
         // v5 (register caching)
-        constexpr int BM = 64, BN = 64, BK = 8, TM = 8, TN = 8;
-        constexpr int block_threads = (BN / TN) * (BM / TM);
-        dim3 block_v5(block_threads);
-        dim3 grid_v5(CEIL_DIV(N, BN), CEIL_DIV(M, BM));
+        constexpr int BM5 = 64, BN5 = 64, BK5 = 8, TM5 = 8, TN5 = 8;
+        constexpr int block_threads_v5 = (BN5 / TN5) * (BM5 / TM5);
+        dim3 block_v5(block_threads_v5);
+        dim3 grid_v5(CEIL_DIV(N, BN5), CEIL_DIV(M, BM5));
         
         for (int i = 0; i < WARMUP; ++i) {
-            sgemm_v5<BM, BN, BK, TM, TN><<<grid_v5, block_v5>>>(M, N, K, alpha, d_A, d_B, beta, d_C);
+            sgemm_v5<BM5, BN5, BK5, TM5, TN5><<<grid_v5, block_v5>>>(M, N, K, alpha, d_A, d_B, beta, d_C);
         }
         cudaCheck(cudaDeviceSynchronize());
         
         cudaCheck(cudaEventRecord(start));
         for (int i = 0; i < ITERS; ++i) {
-            sgemm_v5<BM, BN, BK, TM, TN><<<grid_v5, block_v5>>>(M, N, K, alpha, d_A, d_B, beta, d_C);
+            sgemm_v5<BM5, BN5, BK5, TM5, TN5><<<grid_v5, block_v5>>>(M, N, K, alpha, d_A, d_B, beta, d_C);
         }
         cudaCheck(cudaEventRecord(stop));
         cudaCheck(cudaEventSynchronize(stop));
-        
         cudaCheck(cudaEventElapsedTime(&total_ms, start, stop));
         float gflops_v5 = compute_gflops(M, N, K, total_ms / ITERS);
+        
+        // v7 (double buffering) - only for sizes >= 512 (needs alignment)
+        float gflops_v7 = 0.0f;
+        if (size >= 512) {
+            constexpr int BM7 = 128, BN7 = 128, BK7 = 8, TM7 = 8, TN7 = 8;
+            constexpr int block_threads_v7 = (BN7 / TN7) * (BM7 / TM7);
+            dim3 block_v7(block_threads_v7);
+            dim3 grid_v7(CEIL_DIV(N, BN7), CEIL_DIV(M, BM7));
+            
+            for (int i = 0; i < WARMUP; ++i) {
+                sgemm_v7<BM7, BN7, BK7, TM7, TN7><<<grid_v7, block_v7>>>(M, N, K, alpha, d_A, d_B, beta, d_C);
+            }
+            cudaCheck(cudaDeviceSynchronize());
+            
+            cudaCheck(cudaEventRecord(start));
+            for (int i = 0; i < ITERS; ++i) {
+                sgemm_v7<BM7, BN7, BK7, TM7, TN7><<<grid_v7, block_v7>>>(M, N, K, alpha, d_A, d_B, beta, d_C);
+            }
+            cudaCheck(cudaEventRecord(stop));
+            cudaCheck(cudaEventSynchronize(stop));
+            cudaCheck(cudaEventElapsedTime(&total_ms, start, stop));
+            gflops_v7 = compute_gflops(M, N, K, total_ms / ITERS);
+        }
         
         // cuBLAS
         cublasHandle_t handle;
@@ -1031,14 +1052,18 @@ void perf_scalability() {
         }
         cudaCheck(cudaEventRecord(stop));
         cudaCheck(cudaEventSynchronize(stop));
-        
         cudaCheck(cudaEventElapsedTime(&total_ms, start, stop));
         float gflops_cublas = compute_gflops(M, N, K, total_ms / ITERS);
         
         cublasDestroy(handle);
         
-        std::printf("%4d x %4d | %9.2f | %9.2f | %13.2f\n", 
-                   size, size, gflops_v2, gflops_v5, gflops_cublas);
+        if (size >= 512) {
+            std::printf("%4d x %4d | %9.2f | %9.2f | %9.2f | %13.2f\n", 
+                       size, size, gflops_v2, gflops_v5, gflops_v7, gflops_cublas);
+        } else {
+            std::printf("%4d x %4d | %9.2f | %9.2f | %9s | %13.2f\n", 
+                       size, size, gflops_v2, gflops_v5, "N/A", gflops_cublas);
+        }
         
         cudaEventDestroy(start);
         cudaEventDestroy(stop);
@@ -1046,6 +1071,81 @@ void perf_scalability() {
         cudaFree(d_B);
         cudaFree(d_C);
     }
+    std::printf("\n");
+}
+
+void perf_edge_cases() {
+    std::printf("=== Edge Cases (Non-Power-of-Two Dimensions) ===\n");
+    
+    // Test odd dimensions: 1000x1000x1000
+    int M = 1000, N = 1000, K = 1000;
+    float alpha = 1.0f, beta = 0.0f;
+    
+    float *d_A, *d_B, *d_C;
+    cudaCheck(cudaMalloc(&d_A, M * K * sizeof(float)));
+    cudaCheck(cudaMalloc(&d_B, K * N * sizeof(float)));
+    cudaCheck(cudaMalloc(&d_C, M * N * sizeof(float)));
+    
+    cudaEvent_t start, stop;
+    cudaCheck(cudaEventCreate(&start));
+    cudaCheck(cudaEventCreate(&stop));
+    float total_ms;
+    
+    std::printf("Testing %dx%dx%d (non-power-of-two):\n", M, N, K);
+    
+    // v5
+    constexpr int BM5 = 64, BN5 = 64, BK5 = 8, TM5 = 8, TN5 = 8;
+    constexpr int block_threads_v5 = (BN5 / TN5) * (BM5 / TM5);
+    dim3 block_v5(block_threads_v5);
+    dim3 grid_v5(CEIL_DIV(N, BN5), CEIL_DIV(M, BM5));
+    
+    for (int i = 0; i < WARMUP; ++i) {
+        sgemm_v5<BM5, BN5, BK5, TM5, TN5><<<grid_v5, block_v5>>>(M, N, K, alpha, d_A, d_B, beta, d_C);
+    }
+    cudaCheck(cudaDeviceSynchronize());
+    
+    cudaCheck(cudaEventRecord(start));
+    for (int i = 0; i < ITERS; ++i) {
+        sgemm_v5<BM5, BN5, BK5, TM5, TN5><<<grid_v5, block_v5>>>(M, N, K, alpha, d_A, d_B, beta, d_C);
+    }
+    cudaCheck(cudaEventRecord(stop));
+    cudaCheck(cudaEventSynchronize(stop));
+    cudaCheck(cudaEventElapsedTime(&total_ms, start, stop));
+    float gflops_v5 = compute_gflops(M, N, K, total_ms / ITERS);
+    std::printf("  v5: %.2f GFLOPS (%.4f ms)\n", gflops_v5, total_ms / ITERS);
+    
+    // cuBLAS reference
+    cublasHandle_t handle;
+    cublasCreate(&handle);
+    
+    for (int i = 0; i < WARMUP; ++i) {
+        cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,
+                   N, M, K, &alpha, d_B, N, d_A, K, &beta, d_C, N);
+    }
+    cudaCheck(cudaDeviceSynchronize());
+    
+    cudaCheck(cudaEventRecord(start));
+    for (int i = 0; i < ITERS; ++i) {
+        cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,
+                   N, M, K, &alpha, d_B, N, d_A, K, &beta, d_C, N);
+    }
+    cudaCheck(cudaEventRecord(stop));
+    cudaCheck(cudaEventSynchronize(stop));
+    cudaCheck(cudaEventElapsedTime(&total_ms, start, stop));
+    float gflops_cublas = compute_gflops(M, N, K, total_ms / ITERS);
+    std::printf("  cuBLAS: %.2f GFLOPS (%.4f ms)\n", gflops_cublas, total_ms / ITERS);
+    
+    // Compare with 1024x1024x1024
+    std::printf("  Comparison: 1000^3 vs 1024^3 efficiency = %.1f%% (due to partial tiles)\n",
+               100.0f * gflops_v5 / 1719.0f);  // 1719 is v5@1024 from your results
+    
+    cublasDestroy(handle);
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
+    cudaFree(d_A);
+    cudaFree(d_B);
+    cudaFree(d_C);
+    
     std::printf("\n");
 }
 
@@ -1107,6 +1207,7 @@ int main() {
     
     perf_comparison_summary();
     perf_scalability();
+    perf_edge_cases();
     perf_cpu_baseline();
     
     std::printf("\n=== Profiling Commands ===\n");

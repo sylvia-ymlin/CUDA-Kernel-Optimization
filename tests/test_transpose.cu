@@ -807,6 +807,88 @@ void perf_cpu_baseline() {
     std::printf("TRANSPOSE (CPU)      : %.3f ms/iter, %.2f GB/s\n", cpu_ms, cpu_bw);
 }
 
+void perf_edge_cases() {
+    std::printf("\n=== Edge Cases (Non-Square Matrices) ===\n");
+    
+    // Non-square, non-power-of-two: 4096 x 1023
+    constexpr int M1 = 4096, N1 = 1023;
+    // Square power-of-two reference: 4096 x 1024  
+    constexpr int M2 = 4096, N2 = 1024;
+    constexpr int TILE = 32;
+    constexpr int ITERS = 20;
+    
+    cudaEvent_t start, stop;
+    cudaCheck(cudaEventCreate(&start));
+    cudaCheck(cudaEventCreate(&stop));
+    
+    // Test 4096 x 1023 (non-power-of-two columns)
+    {
+        float *d_in, *d_out;
+        cudaCheck(cudaMalloc(&d_in, M1 * N1 * sizeof(float)));
+        cudaCheck(cudaMalloc(&d_out, N1 * M1 * sizeof(float)));
+        
+        dim3 block(TILE, TILE);
+        dim3 grid(CEIL_DIV(N1, TILE), CEIL_DIV(M1, TILE));
+        
+        // Warmup
+        for (int i = 0; i < 3; ++i) transpose_v4<TILE><<<grid, block>>>(d_in, d_out, M1, N1);
+        cudaCheck(cudaDeviceSynchronize());
+        
+        cudaCheck(cudaEventRecord(start));
+        for (int i = 0; i < ITERS; ++i) {
+            transpose_v4<TILE><<<grid, block>>>(d_in, d_out, M1, N1);
+        }
+        cudaCheck(cudaEventRecord(stop));
+        cudaCheck(cudaEventSynchronize(stop));
+        
+        float ms;
+        cudaCheck(cudaEventElapsedTime(&ms, start, stop));
+        float avg_ms = ms / ITERS;
+        float bw = (2.0f * M1 * N1 * sizeof(float)) / (avg_ms * 1e6);
+        
+        std::printf("transpose_v4 (%d x %d): %.4f ms, %.2f GB/s\n", M1, N1, avg_ms, bw);
+        
+        cudaFree(d_in);
+        cudaFree(d_out);
+    }
+    
+    // Test 4096 x 1024 (reference)
+    {
+        float *d_in, *d_out;
+        cudaCheck(cudaMalloc(&d_in, M2 * N2 * sizeof(float)));
+        cudaCheck(cudaMalloc(&d_out, N2 * M2 * sizeof(float)));
+        
+        dim3 block(TILE, TILE);
+        dim3 grid(CEIL_DIV(N2, TILE), CEIL_DIV(M2, TILE));
+        
+        // Warmup
+        for (int i = 0; i < 3; ++i) transpose_v4<TILE><<<grid, block>>>(d_in, d_out, M2, N2);
+        cudaCheck(cudaDeviceSynchronize());
+        
+        cudaCheck(cudaEventRecord(start));
+        for (int i = 0; i < ITERS; ++i) {
+            transpose_v4<TILE><<<grid, block>>>(d_in, d_out, M2, N2);
+        }
+        cudaCheck(cudaEventRecord(stop));
+        cudaCheck(cudaEventSynchronize(stop));
+        
+        float ms;
+        cudaCheck(cudaEventElapsedTime(&ms, start, stop));
+        float avg_ms = ms / ITERS;
+        float bw = (2.0f * M2 * N2 * sizeof(float)) / (avg_ms * 1e6);
+        
+        std::printf("transpose_v4 (%d x %d): %.4f ms, %.2f GB/s (reference)\n", M2, N2, avg_ms, bw);
+        
+        cudaFree(d_in);
+        cudaFree(d_out);
+    }
+    
+    std::printf("Note: Non-power-of-two causes partial tiles at boundaries\n");
+    
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
+}
+
 // ============================================================================
 // Main
 // ============================================================================
@@ -836,6 +918,7 @@ int main() {
     perf_comparison_summary();
     perf_scalability();
     perf_cpu_baseline();
+    perf_edge_cases();
     
     std::printf("\n=== Profiling Commands ===\n");
     std::printf("For detailed kernel metrics, run:\n");
