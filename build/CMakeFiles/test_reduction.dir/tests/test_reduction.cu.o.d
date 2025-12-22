@@ -179,6 +179,8 @@ CMakeFiles/test_reduction.dir/tests/test_reduction.cu.o : /home/gm_ymlin/CUDA-Ke
     /usr/include/c++/11/utility \
     /usr/include/c++/11/bits/stl_relops.h \
     /usr/include/c++/11/initializer_list \
+    /usr/include/c++/11/cfloat \
+    /usr/lib/gcc/x86_64-linux-gnu/11/include/float.h \
     /usr/include/c++/11/cstdio \
     /usr/include/c++/11/chrono \
     /usr/include/c++/11/ratio \
