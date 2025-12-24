@@ -22,7 +22,7 @@ nvidia-smi --query-gpu=compute_cap --format=csv,noheader
 ## Version Progression
 
 ### v1.py - PyTorch Baseline
-- **Framework:** PyTorch with CUDA tensors
+- **Framework:** PyTorch with CUDA tensors. "What should happen" (reference)
 - **Features:**
   - High-level PyTorch operations (`nn.Linear`, `nn.ReLU`, `nn.CrossEntropyLoss`)
   - Data pre-loaded to GPU (no per-batch transfers)
@@ -33,7 +33,7 @@ nvidia-smi --query-gpu=compute_cap --format=csv,noheader
 - **Purpose:** Establishes baseline performance and correctness reference
 
 ### v2.py - NumPy Implementation
-- **Framework:** Pure NumPy (CPU-only)
+- **Framework:** Pure NumPy (CPU-only). "How does it work mathematically" (understanding)
 - **Features:**
   - Manual forward/backward pass implementation
   - Custom gradient computation and weight updates
@@ -41,7 +41,7 @@ nvidia-smi --query-gpu=compute_cap --format=csv,noheader
 - **Purpose:** Demonstrates the underlying math without GPU acceleration
 
 ### v3.c - C/CPU Implementation
-- **Framework:** Pure C with timing breakdown
+- **Framework:** Pure C with timing breakdown. "How to implement without Python" (low-level)
 - **Features:**
   - Manual memory management
   - Detailed timing instrumentation per operation
@@ -49,7 +49,7 @@ nvidia-smi --query-gpu=compute_cap --format=csv,noheader
 - **Purpose:** Shows CPU performance baseline and prepares for GPU porting
 
 ### v4.cu - Naive CUDA Kernels
-- **Framework:** CUDA C with custom kernels
+- **Framework:** CUDA C with custom kernels. "How to parallelize on GPU" (optimization)
 - **Features:**
   - Custom matrix multiplication kernels
   - Element-wise operations (ReLU, bias, softmax) on GPU
