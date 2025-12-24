@@ -261,6 +261,90 @@ nvcc -O2 -lcublas -o v7 v7.cu && ./v7
 - **CUDA Graphs:** Capture entire training step to reduce launch overhead
 - **CUTLASS:** Template-based GEMM with true epilogue fusion (requires larger batch sizes)
 
+## Debugging Case Study: v7 Memory Layout Bug
+
+### Symptom
+First run of v7.cu showed **exploding loss** and random accuracy:
+```
+Epoch 0 loss: 2.3795
+Epoch 1 loss: 2.4138
+...
+Epoch 9 loss: 14.3912   ← Should decrease, not increase!
+Test Accuracy: 8.05%    ← Random guessing (10 classes)
+```
+
+### Analysis
+
+**1. Identify the Problem Type**
+- Loss *increasing* = gradients flowing in wrong direction or corrupted data
+- ~10% accuracy = model outputting random predictions
+- This is NOT a hyperparameter issue — it's a **correctness bug**
+
+**2. Narrow Down the Cause**
+- v6 (cuBLAS) works fine → bug is in custom GEMM kernel
+- Backward pass uses cuBLAS → bug is in **forward pass**
+- Custom kernel computes `Y = A @ B + bias` → check memory layout
+
+**3. Root Cause: Row-Major vs Column-Major Mismatch**
+
+cuBLAS uses **column-major** storage (Fortran convention):
+```
+Matrix W[M, N] column-major: W[i,j] = W[i + j*M]
+```
+
+My kernel assumed **row-major** for weights:
+```c
+// WRONG: assumed B is column-major [K, N]
+Bs[ty][tx] = B[b_row + col * K];  // B[k + hidden * INPUT_SIZE]
+
+// CORRECT: cuBLAS stores W as column-major [N, K] = [HIDDEN, INPUT]
+Ws[ty][tx] = W[row + w_col * M];  // W[hidden + input * HIDDEN_SIZE]
+```
+
+**4. Additional Issues Found**
+- **Bias indexing:** `bias[col]` vs `bias[row]` — bias is per output feature, not per batch
+- **Softmax input:** Expected row-major `[batch, classes]`, got column-major `[classes, batch]`
+- **Grid dimensions:** Had `(HIDDEN, batch)`, should be `(batch, HIDDEN)` for correct `blockIdx` mapping
+
+### The Fix
+
+Changed kernel convention to match cuBLAS exactly:
+```c
+// Before: Y = A @ B (A row-major, B column-major with wrong stride)
+// After:  Y = W @ X (all column-major, matching cuBLAS)
+
+// FC operation: Y[out, batch] = W[out, in] @ X[in, batch]
+__global__ void fused_gemm_bias_relu_kernel(
+    const float* W,    // [M, K] column-major (M=out_features, K=in_features)
+    const float* X,    // [K, N] column-major (K=in_features, N=batch)
+    const float* bias, // [M]    (per output feature)
+    float* Y,          // [M, N] column-major
+    int M, int K, int N, bool apply_relu
+) {
+    // W access: W[row, k] = W[row + k * M]
+    // X access: X[k, col] = X[k + col * K]
+    // Y write:  Y[row, col] = Y[row + col * M]
+    // bias:     bias[row] (not bias[col]!)
+}
+```
+
+### Lessons Learned
+
+1. **BLAS is column-major** — always. When mixing custom kernels with cuBLAS, match their convention.
+
+2. **Check dimensions carefully:**
+   - `Y = W @ X` (BLAS style) vs `Y = X @ W` (ML style) have different shapes
+   - Grid dimensions must match output layout
+
+3. **Bias is per-feature, not per-sample:**
+   - FC layer: `y[batch, feature] = ... + bias[feature]`
+   - In column-major: `bias[row]` where `row` is feature index
+
+4. **Debug strategy:**
+   - Loss increasing = correctness bug (not tuning issue)
+   - Isolate: which pass (forward/backward)? which kernel?
+   - Print intermediate values or compare with reference (v6)
+
 ## Reference
 
 - [Infatoshi/mnist-cuda](https://github.com/Infatoshi/mnist-cuda)

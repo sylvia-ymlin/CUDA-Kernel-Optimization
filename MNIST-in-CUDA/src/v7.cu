@@ -121,132 +121,76 @@ void initialize_bias_host(float *bias, int size) {
 // ============================================================
 // [NEW in v7] CUSTOM FUSED GEMM + BIAS + RELU KERNEL
 // 
-// Computes: C[M,N] = ReLU(A[M,K] @ B[K,N] + bias[N])
+// Computes: Y[M,N] = ReLU(W[M,K] @ X[K,N] + bias[M])
 // 
-// Tiled shared memory approach:
-// - Each thread block computes a TILE_SIZE x TILE_SIZE output tile
-// - Loads tiles of A and B into shared memory
-// - Reduces global memory bandwidth by TILE_SIZE factor
+// IMPORTANT: Follows cuBLAS convention (column-major everywhere)
+// - W: weights [out_features, in_features] column-major
+// - X: input [in_features, batch] column-major
+// - Y: output [out_features, batch] column-major
+// - bias: [out_features]
 // 
-// Epilogue fusion:
-// - After computing C[i,j], immediately add bias and apply ReLU
-// - Saves 2 global memory round-trips (write C, read C for bias, read C for ReLU)
+// This matches cuBLAS: Y = W @ X (not X @ W!)
 // ============================================================
 __global__ void fused_gemm_bias_relu_kernel(
-    const float* __restrict__ A,      // [M, K] - input (row-major)
-    const float* __restrict__ B,      // [K, N] - weights (column-major for cuBLAS compat)
-    const float* __restrict__ bias,   // [N]
-    float* __restrict__ C,            // [M, N] - output (column-major)
+    const float* __restrict__ W,      // [M, K] column-major (weights)
+    const float* __restrict__ X,      // [K, N] column-major (input)
+    const float* __restrict__ bias,   // [M] (output features)
+    float* __restrict__ Y,            // [M, N] column-major (output)
     int M, int K, int N,
-    bool apply_relu                   // false for output layer
+    bool apply_relu
 ) {
-    // Shared memory tiles
-    __shared__ float As[TILE_SIZE][TILE_SIZE];
-    __shared__ float Bs[TILE_SIZE][TILE_SIZE];
+    __shared__ float Ws[TILE_SIZE][TILE_SIZE];
+    __shared__ float Xs[TILE_SIZE][TILE_SIZE];
     
-    // Output coordinates (column-major: C is stored column-wise like cuBLAS)
-    int row = blockIdx.y * TILE_SIZE + threadIdx.y;  // row in output
-    int col = blockIdx.x * TILE_SIZE + threadIdx.x;  // col in output
+    // Output element [row, col] where row ∈ [0,M), col ∈ [0,N)
+    int row = blockIdx.y * TILE_SIZE + threadIdx.y;  // output feature index
+    int col = blockIdx.x * TILE_SIZE + threadIdx.x;  // batch index
     
     float sum = 0.0f;
     
-    // Loop over tiles
     int num_tiles = (K + TILE_SIZE - 1) / TILE_SIZE;
     for (int t = 0; t < num_tiles; t++) {
-        // Load A tile: A[row, t*TILE + threadIdx.x]
-        // A is row-major: A[i,j] = A[i * K + j]
-        int a_col = t * TILE_SIZE + threadIdx.x;
-        if (row < M && a_col < K) {
-            As[threadIdx.y][threadIdx.x] = A[row * K + a_col];
+        // Load W tile: W[row, t*TILE + tx]
+        // W is column-major: W[i,j] = W[i + j * M]
+        int w_col = t * TILE_SIZE + threadIdx.x;
+        if (row < M && w_col < K) {
+            Ws[threadIdx.y][threadIdx.x] = W[row + w_col * M];
         } else {
-            As[threadIdx.y][threadIdx.x] = 0.0f;
+            Ws[threadIdx.y][threadIdx.x] = 0.0f;
         }
         
-        // Load B tile: B[t*TILE + threadIdx.y, col]
-        // B is column-major (like cuBLAS): B[i,j] = B[i + j * K]
-        int b_row = t * TILE_SIZE + threadIdx.y;
-        if (b_row < K && col < N) {
-            Bs[threadIdx.y][threadIdx.x] = B[b_row + col * K];
+        // Load X tile: X[t*TILE + ty, col]
+        // X is column-major: X[i,j] = X[i + j * K]
+        int x_row = t * TILE_SIZE + threadIdx.y;
+        if (x_row < K && col < N) {
+            Xs[threadIdx.y][threadIdx.x] = X[x_row + col * K];
         } else {
-            Bs[threadIdx.y][threadIdx.x] = 0.0f;
+            Xs[threadIdx.y][threadIdx.x] = 0.0f;
         }
         
         __syncthreads();
         
-        // Compute partial dot product
+        // Y[row,col] = sum_k W[row,k] * X[k,col]
         #pragma unroll
         for (int k = 0; k < TILE_SIZE; k++) {
-            sum += As[threadIdx.y][k] * Bs[k][threadIdx.x];
+            sum += Ws[threadIdx.y][k] * Xs[k][threadIdx.x];
         }
         
         __syncthreads();
     }
     
-    // ============================================================
-    // EPILOGUE: Fused bias + ReLU (no extra memory traffic!)
-    // Without fusion: write sum, load sum, add bias, write, load, ReLU, write
-    // With fusion: add bias in register, ReLU in register, single write
-    // ============================================================
+    // Epilogue: bias (indexed by output row) + optional ReLU
     if (row < M && col < N) {
-        sum += bias[col];  // Add bias
+        sum += bias[row];  // bias[out_feature], not bias[batch]!
         if (apply_relu) {
-            sum = fmaxf(0.0f, sum);  // ReLU
+            sum = fmaxf(0.0f, sum);
         }
-        // C is column-major: C[i,j] = C[i + j * M]
-        C[row + col * M] = sum;
+        // Y is column-major: Y[i,j] = Y[i + j * M]
+        Y[row + col * M] = sum;
     }
 }
 
-// ============================================================
-// [NEW in v7] Simple GEMM without epilogue (for layers that need it)
-// Used for: FC2 output (no ReLU)
-// ============================================================
-__global__ void fused_gemm_bias_kernel(
-    const float* __restrict__ A,
-    const float* __restrict__ B,
-    const float* __restrict__ bias,
-    float* __restrict__ C,
-    int M, int K, int N
-) {
-    __shared__ float As[TILE_SIZE][TILE_SIZE];
-    __shared__ float Bs[TILE_SIZE][TILE_SIZE];
-    
-    int row = blockIdx.y * TILE_SIZE + threadIdx.y;
-    int col = blockIdx.x * TILE_SIZE + threadIdx.x;
-    
-    float sum = 0.0f;
-    
-    int num_tiles = (K + TILE_SIZE - 1) / TILE_SIZE;
-    for (int t = 0; t < num_tiles; t++) {
-        int a_col = t * TILE_SIZE + threadIdx.x;
-        if (row < M && a_col < K) {
-            As[threadIdx.y][threadIdx.x] = A[row * K + a_col];
-        } else {
-            As[threadIdx.y][threadIdx.x] = 0.0f;
-        }
-        
-        int b_row = t * TILE_SIZE + threadIdx.y;
-        if (b_row < K && col < N) {
-            Bs[threadIdx.y][threadIdx.x] = B[b_row + col * K];
-        } else {
-            Bs[threadIdx.y][threadIdx.x] = 0.0f;
-        }
-        
-        __syncthreads();
-        
-        #pragma unroll
-        for (int k = 0; k < TILE_SIZE; k++) {
-            sum += As[threadIdx.y][k] * Bs[k][threadIdx.x];
-        }
-        
-        __syncthreads();
-    }
-    
-    if (row < M && col < N) {
-        sum += bias[col];
-        C[row + col * M] = sum;
-    }
-}
+// FC2 version: same as above but apply_relu=false (just call main kernel with false)
 
 // Backward kernels (same as v6)
 __global__ void relu_backward_kernel(float *grad, float *x, int total) {
@@ -264,6 +208,9 @@ __global__ void bias_backward_kernel(float *grad_output, float *grad_bias, int b
     }
 }
 
+// Softmax + cross-entropy + backward gradient computation
+// NOTE: logits is column-major [num_classes, batch_size] to match cuBLAS output
+//       grad_output is also column-major [num_classes, batch_size] for backward
 __global__ void softmax_cross_entropy_backward_kernel(
     float *logits, int *labels, float *grad_output, float *loss_per_sample,
     int batch_size, int num_classes
@@ -275,8 +222,9 @@ __global__ void softmax_cross_entropy_backward_kernel(
     float *sample_logits = shared;
     int tid = threadIdx.x;
 
+    // Load logits: column-major [num_classes, batch], element [c, b] at index c + b * num_classes
     if (tid < num_classes) {
-        sample_logits[tid] = logits[b * num_classes + tid];
+        sample_logits[tid] = logits[tid + b * num_classes];
     }
     __syncthreads();
 
@@ -312,7 +260,8 @@ __global__ void softmax_cross_entropy_backward_kernel(
             grad -= 1.0f;
         }
         grad /= (float)batch_size;
-        grad_output[b * num_classes + tid] = grad;
+        // Store grad: column-major [num_classes, batch], element [c, b] at index c + b * num_classes
+        grad_output[tid + b * num_classes] = grad;
 
         if (tid == label) {
             loss_per_sample[b] = -logf(fmaxf(prob, 1e-7f));
@@ -322,37 +271,45 @@ __global__ void softmax_cross_entropy_backward_kernel(
 
 // ============================================================
 // [NEW in v7] Forward pass using CUSTOM FUSED GEMM
-// v6: cuBLAS Sgemm + bias_add_relu_kernel (2 ops per layer)
-// v7: fused_gemm_bias_relu_kernel (1 op per layer)
+// 
+// cuBLAS convention: Y = W @ X (column-major everywhere)
+// FC1: Y1[HIDDEN, batch] = W1[HIDDEN, INPUT] @ X[INPUT, batch]
+// FC2: Y2[OUTPUT, batch] = W2[OUTPUT, HIDDEN] @ Y1[HIDDEN, batch]
 // ============================================================
 void forward_pass_stream(NeuralNetworkCUDA *nn, int stream_idx, int batch_size) {
     cudaStream_t stream = nn->streams[stream_idx];
-    
-    // FC1: output = ReLU(input @ W1 + b1)
-    // Grid: cover [batch_size, HIDDEN_SIZE] output
     dim3 block(TILE_SIZE, TILE_SIZE);
-    dim3 grid1((HIDDEN_SIZE + TILE_SIZE - 1) / TILE_SIZE,
-               (batch_size + TILE_SIZE - 1) / TILE_SIZE);
+    
+    // FC1: Y = W1 @ X + b1, then ReLU
+    // W1: [HIDDEN, INPUT] col-major (M=HIDDEN, K=INPUT)
+    // X:  [INPUT, batch] col-major (input stored row-major = col-major transposed)
+    // Y:  [HIDDEN, batch] col-major (M=HIDDEN, N=batch)
+    dim3 grid1((batch_size + TILE_SIZE - 1) / TILE_SIZE,    // N dimension (batch)
+               (HIDDEN_SIZE + TILE_SIZE - 1) / TILE_SIZE);  // M dimension (hidden)
     
     fused_gemm_bias_relu_kernel<<<grid1, block, 0, stream>>>(
-        nn->d_input_batch[stream_idx],  // A: [batch_size, INPUT_SIZE] row-major
-        nn->d_weights1,                  // B: [INPUT_SIZE, HIDDEN_SIZE] col-major
-        nn->d_bias1,                     // bias: [HIDDEN_SIZE]
-        nn->d_fc1_output[stream_idx],   // C: [batch_size, HIDDEN_SIZE] col-major
-        batch_size, INPUT_SIZE, HIDDEN_SIZE,
+        nn->d_weights1,                  // W: [HIDDEN, INPUT] col-major
+        nn->d_input_batch[stream_idx],   // X: [INPUT, batch] col-major
+        nn->d_bias1,                     // bias: [HIDDEN]
+        nn->d_fc1_output[stream_idx],    // Y: [HIDDEN, batch] col-major
+        HIDDEN_SIZE, INPUT_SIZE, batch_size,  // M, K, N
         true  // apply ReLU
     );
 
-    // FC2: output = hidden @ W2 + b2 (no ReLU)
-    dim3 grid2((OUTPUT_SIZE + TILE_SIZE - 1) / TILE_SIZE,
-               (batch_size + TILE_SIZE - 1) / TILE_SIZE);
+    // FC2: Y = W2 @ H + b2 (no ReLU)
+    // W2: [OUTPUT, HIDDEN] col-major (M=OUTPUT, K=HIDDEN)
+    // H:  [HIDDEN, batch] col-major (from FC1)
+    // Y:  [OUTPUT, batch] col-major (M=OUTPUT, N=batch)
+    dim3 grid2((batch_size + TILE_SIZE - 1) / TILE_SIZE,    // N dimension (batch)
+               (OUTPUT_SIZE + TILE_SIZE - 1) / TILE_SIZE);  // M dimension (output)
     
-    fused_gemm_bias_kernel<<<grid2, block, 0, stream>>>(
-        nn->d_fc1_output[stream_idx],   // A: [batch_size, HIDDEN_SIZE] - need row-major view
-        nn->d_weights2,                  // B: [HIDDEN_SIZE, OUTPUT_SIZE] col-major
-        nn->d_bias2,                     // bias: [OUTPUT_SIZE]
-        nn->d_fc2_output[stream_idx],   // C: [batch_size, OUTPUT_SIZE] col-major
-        batch_size, HIDDEN_SIZE, OUTPUT_SIZE
+    fused_gemm_bias_relu_kernel<<<grid2, block, 0, stream>>>(
+        nn->d_weights2,                  // W: [OUTPUT, HIDDEN] col-major
+        nn->d_fc1_output[stream_idx],    // X: [HIDDEN, batch] col-major
+        nn->d_bias2,                     // bias: [OUTPUT]
+        nn->d_fc2_output[stream_idx],    // Y: [OUTPUT, batch] col-major
+        OUTPUT_SIZE, HIDDEN_SIZE, batch_size,  // M, K, N
+        false  // no ReLU for output layer
     );
 }
 
@@ -529,28 +486,31 @@ void evaluate(NeuralNetworkCUDA *nn, float *X_test, int *y_test) {
         float *batch_x = X_test + batch * BATCH_SIZE * INPUT_SIZE;
         int *batch_y = y_test + batch * BATCH_SIZE;
         
-        // Forward: hidden = relu(X @ W1 + b1)
-        // Note: weights are column-major from GPU, so access pattern differs
-        for (int i = 0; i < BATCH_SIZE; i++) {
-            for (int j = 0; j < HIDDEN_SIZE; j++) {
-                float sum = h_b1[j];
-                for (int k = 0; k < INPUT_SIZE; k++) {
-                    // W1 is column-major: W1[k,j] = h_W1[k + j * INPUT_SIZE]
-                    sum += batch_x[i * INPUT_SIZE + k] * h_W1[k + j * INPUT_SIZE];
+        // Forward: hidden = relu(W1 @ X + b1)
+        // cuBLAS stores W1 as [HIDDEN, INPUT] column-major: W1[h,i] = h_W1[h + i * HIDDEN_SIZE]
+        // Operation: hidden[b,h] = sum_i input[b,i] * W1[h,i] + b1[h]
+        for (int b = 0; b < BATCH_SIZE; b++) {
+            for (int h = 0; h < HIDDEN_SIZE; h++) {
+                float sum = h_b1[h];
+                for (int i = 0; i < INPUT_SIZE; i++) {
+                    // W1[h,i] in column-major [HIDDEN, INPUT] = W1[h + i * HIDDEN_SIZE]
+                    sum += batch_x[b * INPUT_SIZE + i] * h_W1[h + i * HIDDEN_SIZE];
                 }
-                hidden[i * HIDDEN_SIZE + j] = fmaxf(0.0f, sum);
+                hidden[b * HIDDEN_SIZE + h] = fmaxf(0.0f, sum);
             }
         }
         
-        // Forward: output = hidden @ W2 + b2
-        for (int i = 0; i < BATCH_SIZE; i++) {
-            for (int j = 0; j < OUTPUT_SIZE; j++) {
-                float sum = h_b2[j];
-                for (int k = 0; k < HIDDEN_SIZE; k++) {
-                    // W2 is column-major: W2[k,j] = h_W2[k + j * HIDDEN_SIZE]
-                    sum += hidden[i * HIDDEN_SIZE + k] * h_W2[k + j * HIDDEN_SIZE];
+        // Forward: output = W2 @ hidden + b2
+        // cuBLAS stores W2 as [OUTPUT, HIDDEN] column-major: W2[o,h] = h_W2[o + h * OUTPUT_SIZE]
+        // Operation: output[b,o] = sum_h hidden[b,h] * W2[o,h] + b2[o]
+        for (int b = 0; b < BATCH_SIZE; b++) {
+            for (int o = 0; o < OUTPUT_SIZE; o++) {
+                float sum = h_b2[o];
+                for (int h = 0; h < HIDDEN_SIZE; h++) {
+                    // W2[o,h] in column-major [OUTPUT, HIDDEN] = W2[o + h * OUTPUT_SIZE]
+                    sum += hidden[b * HIDDEN_SIZE + h] * h_W2[o + h * OUTPUT_SIZE];
                 }
-                output[i * OUTPUT_SIZE + j] = sum;
+                output[b * OUTPUT_SIZE + o] = sum;
             }
         }
         
