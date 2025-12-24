@@ -20,8 +20,9 @@
 
 // Timing structure
 typedef struct {
-    double memory_transfers;
-    double gpu_compute;
+    double memory_transfers;  // Time to issue async H2D transfers
+    double gpu_compute;       // Time to issue async GPU operations
+    double sync_wait;         // Time waiting for GPU to finish (cudaStreamSynchronize)
     double total_time;
 } TimingStats;
 
@@ -460,7 +461,10 @@ int main() {
 
             // Wait for previous batch on this stream to complete
             if (batch >= NUM_STREAMS) {
+                clock_gettime(CLOCK_MONOTONIC, &step_start);
                 CUDA_CHECK(cudaStreamSynchronize(nn.streams[stream_idx]));
+                clock_gettime(CLOCK_MONOTONIC, &step_end);
+                stats.sync_wait += get_time_diff(step_start, step_end);
                 
                 // Collect loss from previous batch on this stream
                 for (int i = 0; i < BATCH_SIZE; i++) {
@@ -498,7 +502,11 @@ int main() {
 
         // Collect remaining losses
         for (int s = 0; s < NUM_STREAMS; s++) {
+            clock_gettime(CLOCK_MONOTONIC, &step_start);
             CUDA_CHECK(cudaStreamSynchronize(nn.streams[s]));
+            clock_gettime(CLOCK_MONOTONIC, &step_end);
+            stats.sync_wait += get_time_diff(step_start, step_end);
+            
             int remaining_batch = num_batches - NUM_STREAMS + s;
             if (remaining_batch >= 0 && remaining_batch < num_batches) {
                 for (int i = 0; i < BATCH_SIZE; i++) {
@@ -517,8 +525,16 @@ int main() {
     printf("Total training time: %.3f seconds\n\n", stats.total_time);
 
     printf("Timing Breakdown:\n");
-    printf("  H2D transfers:  %6.3fs (%5.1f%%)\n", stats.memory_transfers, 100.0 * stats.memory_transfers / stats.total_time);
-    printf("  GPU compute:    %6.3fs (%5.1f%%)\n", stats.gpu_compute, 100.0 * stats.gpu_compute / stats.total_time);
+    printf("  H2D issue:      %6.3fs (%5.1f%%)  <- async, returns immediately\n", 
+           stats.memory_transfers, 100.0 * stats.memory_transfers / stats.total_time);
+    printf("  GPU issue:      %6.3fs (%5.1f%%)  <- async, returns immediately\n", 
+           stats.gpu_compute, 100.0 * stats.gpu_compute / stats.total_time);
+    printf("  Sync wait:      %6.3fs (%5.1f%%)  <- actual GPU execution time\n", 
+           stats.sync_wait, 100.0 * stats.sync_wait / stats.total_time);
+    
+    double accounted = stats.memory_transfers + stats.gpu_compute + stats.sync_wait;
+    printf("  Other:          %6.3fs (%5.1f%%)  <- CPU overhead (loss reduction, etc.)\n",
+           stats.total_time - accounted, 100.0 * (stats.total_time - accounted) / stats.total_time);
 
     free_nn_cuda(&nn);
     

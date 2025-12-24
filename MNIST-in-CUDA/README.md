@@ -135,12 +135,15 @@ nvcc -O2 -lcublas -o v6 v6.cu && ./v6
 ### v6.cu - Streams & Fusion Optimized
 - **Framework:** CUDA with cuBLAS + advanced optimizations
 - **Features:**
-  - CUDA Streams for overlapping data transfer with compute
-  - Pinned host memory (`cudaMallocHost`) for faster H2D transfers
-  - Double-buffered inputs for pipelining
-  - Fused kernels (bias + ReLU combined into single kernel)
+  - CUDA Streams (`cudaStreamCreate`, 2 streams for double buffering)
+  - Pinned host memory (`cudaMallocHost`) for faster DMA transfers
+  - Double-buffered device buffers (each stream has own input/output/grad buffers)
+  - Async transfers (`cudaMemcpyAsync`, `cudaMemsetAsync`)
+  - Fused kernel: `bias_add_relu_kernel` combines bias + ReLU (1 kernel vs 2)
+  - Stream-aware cuBLAS (`cublasSetStream`)
   - ~~TF32 Tensor Cores~~ — skipped (T4 is Turing SM 7.5, TF32 requires Ampere SM 8.0+)
-- **Purpose:** Maximum performance through transfer/compute overlap and kernel fusion
+- **Purpose:** Hide H2D latency through overlap; reduce kernel launch overhead via fusion
+- **Note:** Stream[0] computes batch N while Stream[1] transfers batch N+1
 
 ### v7.cu - Custom Fused GEMM (Educational)
 - **Framework:** CUDA with custom kernels + cuBLAS hybrid
