@@ -42,7 +42,7 @@ def triton_softmax(input: torch.Tensor) -> torch.Tensor:
 
 torch.manual_seed(0)
 input = torch.randn(256, 1024, device="cuda", dtype=torch.float32)
-tortch_result = torch.softmax(input, dim=1)
+torch_result = torch.softmax(input, dim=1)
 
 triton_result = triton_softmax(input)
 
