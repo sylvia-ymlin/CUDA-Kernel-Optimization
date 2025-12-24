@@ -24,7 +24,7 @@ plt.rcParams['axes.facecolor'] = 'white'
 plt.rcParams['savefig.facecolor'] = 'white'
 plt.rcParams['savefig.dpi'] = 150
 
-OUTPUT_DIR = os.path.dirname(os.path.abspath(__file__))
+OUTPUT_DIR = os.path.dirname(os.path.abspath(__file__)) + '/assets'
 
 # ============================================================================
 # FIGURE 1: Memory Hierarchy

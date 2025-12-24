@@ -151,7 +151,7 @@ ax.text(9.5, 0.85, 'Step 11', ha='center', va='center', fontsize=18, color=M['di
 arr(7.0, 3.5, 7.0, 6.8)
 
 plt.tight_layout()
-plt.savefig('./assets/mlp_training_flow.png', dpi=150, bbox_inches='tight', facecolor=M['bg'])
+plt.savefig('assets/mlp_training_flow.png', dpi=150, bbox_inches='tight', facecolor=M['bg'])
 print("Saved: mlp_training_flow.png")
 plt.rcdefaults()
 
