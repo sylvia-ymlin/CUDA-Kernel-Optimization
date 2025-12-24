@@ -25,25 +25,21 @@ __global__ void max_kernel(float* input, float* output, int N){
    int laneId = threadIdx.x % warpSize; // the idx in the warp
 
    float val = (idx < N) ? input[idx] : -FLT_MAX; // store the value in register
-   
-   // Warp-level reduction (start at warpSize >> 1, not warpSize)
    #pragma unroll
-   for(int offset = warpSize >> 1; offset > 0; offset >>= 1){
+   for(int offset = warpSize; offset > 0; offset >>= 1){
       val = fmaxf(val, __shfl_down_sync(0xffffffff, val, offset));
    }
-   
-   // Store warp result - direct write since each warp writes to unique index
-   if(laneId == 0) s_mem[warp_id] = val;
+   if(laneId == 0) atomicMax(&s_mem[warp_id], val);
    __syncthreads();
 
-   // Block-level reduction in first warp
+   // reduce in the block, to the first warp
    if(warp_id == 0){
       int warpNum = blockDim.x / warpSize;
       val = (laneId < warpNum) ? s_mem[laneId] : -FLT_MAX;
       for(int offset = warpSize >> 1; offset > 0; offset >>= 1){
+         // use the custom atomicMax function
          val = fmaxf(val, __shfl_down_sync(0xffffffff, val, offset));
       }
-      // atomicMax needed here for multi-block reduction
       if(laneId == 0) atomicMax(output, val);
    }
 }
