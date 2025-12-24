@@ -200,3 +200,6 @@ if __name__ == "__main__":
     print(f"  Other:            {timing_stats['other']:6.3f}s ({100.0 * timing_stats['other'] / timing_stats['total_time']:5.1f}%)")
 
     print("Finished Training")
+    
+    # Evaluate on test set (not timed)
+    evaluate(model, test_data, test_labels)

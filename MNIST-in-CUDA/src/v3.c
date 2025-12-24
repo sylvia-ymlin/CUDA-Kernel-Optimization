@@ -450,6 +450,52 @@ void initialize_neural_network(NeuralNetwork *nn) {
     initialize_random_weights(nn);
 }
 
+// Evaluate model accuracy on test set
+void evaluate(NeuralNetwork *nn, float *X_test, int *y_test) {
+    int correct = 0;
+    int num_batches = TEST_SIZE / BATCH_SIZE;
+    
+    float *hidden = malloc(BATCH_SIZE * HIDDEN_SIZE * sizeof(float));
+    float *output = malloc(BATCH_SIZE * OUTPUT_SIZE * sizeof(float));
+    
+    for (int batch = 0; batch < num_batches; batch++) {
+        float *batch_x = X_test + batch * BATCH_SIZE * INPUT_SIZE;
+        int *batch_y = y_test + batch * BATCH_SIZE;
+        
+        // Forward pass: hidden = relu(X @ W1 + b1)
+        matmul(batch_x, nn->weights1, hidden, BATCH_SIZE, INPUT_SIZE, HIDDEN_SIZE);
+        for (int i = 0; i < BATCH_SIZE * HIDDEN_SIZE; i++) {
+            hidden[i] += nn->bias1[i % HIDDEN_SIZE];
+            hidden[i] = fmaxf(0.0f, hidden[i]);  // ReLU
+        }
+        
+        // Forward pass: output = hidden @ W2 + b2
+        matmul(hidden, nn->weights2, output, BATCH_SIZE, HIDDEN_SIZE, OUTPUT_SIZE);
+        for (int i = 0; i < BATCH_SIZE * OUTPUT_SIZE; i++) {
+            output[i] += nn->bias2[i % OUTPUT_SIZE];
+        }
+        
+        // Count correct predictions
+        for (int i = 0; i < BATCH_SIZE; i++) {
+            int pred = 0;
+            float max_val = output[i * OUTPUT_SIZE];
+            for (int j = 1; j < OUTPUT_SIZE; j++) {
+                if (output[i * OUTPUT_SIZE + j] > max_val) {
+                    max_val = output[i * OUTPUT_SIZE + j];
+                    pred = j;
+                }
+            }
+            if (pred == batch_y[i]) correct++;
+        }
+    }
+    
+    free(hidden);
+    free(output);
+    
+    float accuracy = 100.0f * correct / (num_batches * BATCH_SIZE);
+    printf("Test Accuracy: %.2f%%\n", accuracy);
+}
+
 int main() {
     srand(time(NULL));  // Random seed for natural variance
 
@@ -470,6 +516,9 @@ int main() {
 
 
     train_timed(&nn, X_train, y_train);
+    
+    // Evaluate on test set (not timed)
+    evaluate(&nn, X_test, y_test);
 
     free(nn.weights1);
     free(nn.weights2);

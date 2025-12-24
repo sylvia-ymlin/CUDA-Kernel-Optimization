@@ -157,6 +157,31 @@ def train_timed(model, X_train, y_train, X_test, y_test, batch_size, epochs, lea
     print(f"  Other:            {other:6.3f}s ({100.0 * other / timing_stats['total_time']:5.1f}%)")
     
     print("Training completed!")
+    
+    # Evaluate on test set (not timed)
+    evaluate(model, X_test, y_test, batch_size)
+
+def evaluate(model, X_test, y_test, batch_size):
+    """Evaluate model accuracy on test set"""
+    correct = 0
+    total = 0
+    num_batches = len(X_test) // batch_size
+    
+    for i in range(num_batches):
+        batch_x = X_test[i * batch_size:(i + 1) * batch_size].reshape(batch_size, -1)
+        batch_y = y_test[i * batch_size:(i + 1) * batch_size]
+        
+        # Forward pass
+        hidden = relu(batch_x @ model.W1 + model.b1)
+        output = hidden @ model.W2 + model.b2
+        
+        # Predictions
+        predictions = np.argmax(output, axis=1)
+        correct += np.sum(predictions == batch_y)
+        total += batch_size
+    
+    accuracy = 100.0 * correct / total
+    print(f"Test Accuracy: {accuracy:.2f}%")
 
 if __name__ == "__main__":
     # Use random seed for natural variance (no fixed seed)

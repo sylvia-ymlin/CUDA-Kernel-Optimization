@@ -529,6 +529,73 @@ void initialize_neural_network(NeuralNetwork *nn) {
     initialize_random_weights(nn);
 }
 
+// Evaluate model accuracy on test set (CPU-side, not timed)
+void evaluate(NeuralNetwork *nn, float *X_test, int *y_test) {
+    int correct = 0;
+    int num_batches = TEST_SIZE / BATCH_SIZE;
+    
+    // Allocate host buffers
+    float *hidden = (float *)malloc(BATCH_SIZE * HIDDEN_SIZE * sizeof(float));
+    float *output = (float *)malloc(BATCH_SIZE * OUTPUT_SIZE * sizeof(float));
+    
+    // Copy weights to host for CPU evaluation
+    float *h_W1 = (float *)malloc(INPUT_SIZE * HIDDEN_SIZE * sizeof(float));
+    float *h_W2 = (float *)malloc(HIDDEN_SIZE * OUTPUT_SIZE * sizeof(float));
+    float *h_b1 = (float *)malloc(HIDDEN_SIZE * sizeof(float));
+    float *h_b2 = (float *)malloc(OUTPUT_SIZE * sizeof(float));
+    
+    CUDA_CHECK(cudaMemcpy(h_W1, nn->weights1, INPUT_SIZE * HIDDEN_SIZE * sizeof(float), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(h_W2, nn->weights2, HIDDEN_SIZE * OUTPUT_SIZE * sizeof(float), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(h_b1, nn->bias1, HIDDEN_SIZE * sizeof(float), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(h_b2, nn->bias2, OUTPUT_SIZE * sizeof(float), cudaMemcpyDeviceToHost));
+    
+    for (int batch = 0; batch < num_batches; batch++) {
+        float *batch_x = X_test + batch * BATCH_SIZE * INPUT_SIZE;
+        int *batch_y = y_test + batch * BATCH_SIZE;
+        
+        // Forward: hidden = relu(X @ W1 + b1)
+        for (int i = 0; i < BATCH_SIZE; i++) {
+            for (int j = 0; j < HIDDEN_SIZE; j++) {
+                float sum = h_b1[j];
+                for (int k = 0; k < INPUT_SIZE; k++) {
+                    sum += batch_x[i * INPUT_SIZE + k] * h_W1[k * HIDDEN_SIZE + j];
+                }
+                hidden[i * HIDDEN_SIZE + j] = fmaxf(0.0f, sum);
+            }
+        }
+        
+        // Forward: output = hidden @ W2 + b2
+        for (int i = 0; i < BATCH_SIZE; i++) {
+            for (int j = 0; j < OUTPUT_SIZE; j++) {
+                float sum = h_b2[j];
+                for (int k = 0; k < HIDDEN_SIZE; k++) {
+                    sum += hidden[i * HIDDEN_SIZE + k] * h_W2[k * OUTPUT_SIZE + j];
+                }
+                output[i * OUTPUT_SIZE + j] = sum;
+            }
+        }
+        
+        // Count correct predictions
+        for (int i = 0; i < BATCH_SIZE; i++) {
+            int pred = 0;
+            float max_val = output[i * OUTPUT_SIZE];
+            for (int j = 1; j < OUTPUT_SIZE; j++) {
+                if (output[i * OUTPUT_SIZE + j] > max_val) {
+                    max_val = output[i * OUTPUT_SIZE + j];
+                    pred = j;
+                }
+            }
+            if (pred == batch_y[i]) correct++;
+        }
+    }
+    
+    free(hidden); free(output);
+    free(h_W1); free(h_W2); free(h_b1); free(h_b2);
+    
+    float accuracy = 100.0f * correct / (num_batches * BATCH_SIZE);
+    printf("Test Accuracy: %.2f%%\n", accuracy);
+}
+
 int main() {
     srand(time(NULL));  // Random seed for natural variance
 
@@ -548,6 +615,9 @@ int main() {
     load_labels("./data/y_test.bin", y_test, TEST_SIZE);
 
     train_timed(&nn, X_train, y_train);
+    
+    // Evaluate on test set (not timed)
+    evaluate(&nn, X_test, y_test);
 
     CUDA_CHECK(cudaFree(nn.weights1));
     CUDA_CHECK(cudaFree(nn.weights2));
