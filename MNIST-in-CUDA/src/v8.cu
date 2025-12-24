@@ -85,6 +85,9 @@ typedef struct {
     // Labels stay int, loss stays float for reduction
     int *d_labels[NUM_STREAMS];
     float *d_loss[NUM_STREAMS];
+    
+    // FP32 buffers for bias gradient accumulation (atomicAdd compatibility)
+    float *d_grad_bias1_fp32, *d_grad_bias2_fp32;
 
     cudaStream_t streams[NUM_STREAMS];
     cublasHandle_t cublas_handle;
@@ -140,16 +143,16 @@ void initialize_bias_host_fp16(__half *bias, int size) {
 }
 
 // ============================================================
-// [NEW in v8] FP16 Fused bias + ReLU kernel using half intrinsics
+// [NEW in v8] FP16 Fused bias + ReLU kernel
+// Note: Use float comparison for portability (half comparison varies by CUDA version)
 // ============================================================
 __global__ void bias_add_relu_fp16_kernel(__half *x, __half *bias, int batch, int size) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < batch * size) {
         int bias_idx = idx % size;
-        __half val = __hadd(x[idx], bias[bias_idx]);
+        float val = __half2float(x[idx]) + __half2float(bias[bias_idx]);
         // ReLU: max(0, val)
-        __half zero = __float2half(0.0f);
-        x[idx] = __hgt(val, zero) ? val : zero;
+        x[idx] = __float2half(fmaxf(0.0f, val));
     }
 }
 
@@ -168,21 +171,29 @@ __global__ void bias_add_fp16_kernel(__half *x, __half *bias, int batch, int siz
 __global__ void relu_backward_fp16_kernel(__half *grad, __half *x, int total) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < total) {
-        __half zero = __float2half(0.0f);
         // grad *= (x > 0) ? 1 : 0
-        grad[idx] = __hgt(x[idx], zero) ? grad[idx] : zero;
+        float x_val = __half2float(x[idx]);
+        grad[idx] = (x_val > 0.0f) ? grad[idx] : __float2half(0.0f);
     }
 }
 
 // ============================================================
-// [NEW in v8] FP16 bias backward with atomic add
-// Note: atomicAdd for __half requires SM 7.0+, T4 (SM 7.5) supports it
+// [NEW in v8] FP16 bias backward - accumulate to float buffer
+// Note: atomicAdd for __half has limited support; use float accumulation
 // ============================================================
-__global__ void bias_backward_fp16_kernel(__half *grad_output, __half *grad_bias, int batch, int size) {
+__global__ void bias_backward_fp16_kernel(__half *grad_output, float *grad_bias_fp32, int batch, int size) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < batch * size) {
         int bias_idx = idx % size;
-        atomicAdd(&grad_bias[bias_idx], grad_output[idx]);
+        atomicAdd(&grad_bias_fp32[bias_idx], __half2float(grad_output[idx]));
+    }
+}
+
+// Convert FP32 bias gradient back to FP16
+__global__ void convert_bias_grad_kernel(float *grad_bias_fp32, __half *grad_bias_fp16, int size) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < size) {
+        grad_bias_fp16[idx] = __float2half(grad_bias_fp32[idx]);
     }
 }
 
@@ -307,11 +318,11 @@ void backward_pass_stream(NeuralNetworkCUDA *nn, int stream_idx, int batch_size)
     __half alpha = __float2half(1.0f);
     __half beta = __float2half(0.0f);
     
-    // Zero gradients (FP16)
+    // Zero gradients (FP16 for weights, FP32 for bias accumulation)
     CUDA_CHECK(cudaMemsetAsync(nn->d_grad_weights1, 0, INPUT_SIZE * HIDDEN_SIZE * sizeof(__half), stream));
     CUDA_CHECK(cudaMemsetAsync(nn->d_grad_weights2, 0, HIDDEN_SIZE * OUTPUT_SIZE * sizeof(__half), stream));
-    CUDA_CHECK(cudaMemsetAsync(nn->d_grad_bias1, 0, HIDDEN_SIZE * sizeof(__half), stream));
-    CUDA_CHECK(cudaMemsetAsync(nn->d_grad_bias2, 0, OUTPUT_SIZE * sizeof(__half), stream));
+    CUDA_CHECK(cudaMemsetAsync(nn->d_grad_bias1_fp32, 0, HIDDEN_SIZE * sizeof(float), stream));
+    CUDA_CHECK(cudaMemsetAsync(nn->d_grad_bias2_fp32, 0, OUTPUT_SIZE * sizeof(float), stream));
 
     // dW2 = grad_output @ hidden.T
     CUBLAS_CHECK(cublasGemmEx(nn->cublas_handle,
@@ -329,7 +340,7 @@ void backward_pass_stream(NeuralNetworkCUDA *nn, int stream_idx, int batch_size)
     int total_out = batch_size * OUTPUT_SIZE;
     int grid_out = (total_out + 255) / 256;
     bias_backward_fp16_kernel<<<grid_out, 256, 0, stream>>>(
-        nn->d_grad_output[stream_idx], nn->d_grad_bias2, batch_size, OUTPUT_SIZE);
+        nn->d_grad_output[stream_idx], nn->d_grad_bias2_fp32, batch_size, OUTPUT_SIZE);
 
     // grad_hidden = W2.T @ grad_output
     CUBLAS_CHECK(cublasGemmEx(nn->cublas_handle,
@@ -364,7 +375,13 @@ void backward_pass_stream(NeuralNetworkCUDA *nn, int stream_idx, int batch_size)
     ));
 
     bias_backward_fp16_kernel<<<grid_hidden, 256, 0, stream>>>(
-        nn->d_grad_hidden[stream_idx], nn->d_grad_bias1, batch_size, HIDDEN_SIZE);
+        nn->d_grad_hidden[stream_idx], nn->d_grad_bias1_fp32, batch_size, HIDDEN_SIZE);
+    
+    // Convert FP32 bias gradients back to FP16
+    int grid_b1 = (HIDDEN_SIZE + 255) / 256;
+    int grid_b2 = (OUTPUT_SIZE + 255) / 256;
+    convert_bias_grad_kernel<<<grid_b1, 256, 0, stream>>>(nn->d_grad_bias1_fp32, nn->d_grad_bias1, HIDDEN_SIZE);
+    convert_bias_grad_kernel<<<grid_b2, 256, 0, stream>>>(nn->d_grad_bias2_fp32, nn->d_grad_bias2, OUTPUT_SIZE);
 }
 
 // ============================================================
@@ -449,6 +466,9 @@ void initialize_nn_cuda(NeuralNetworkCUDA *nn) {
     CUDA_CHECK(cudaMalloc(&nn->d_grad_weights2, HIDDEN_SIZE * OUTPUT_SIZE * sizeof(__half)));
     CUDA_CHECK(cudaMalloc(&nn->d_grad_bias1, HIDDEN_SIZE * sizeof(__half)));
     CUDA_CHECK(cudaMalloc(&nn->d_grad_bias2, OUTPUT_SIZE * sizeof(__half)));
+    // FP32 buffers for bias gradient accumulation
+    CUDA_CHECK(cudaMalloc(&nn->d_grad_bias1_fp32, HIDDEN_SIZE * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&nn->d_grad_bias2_fp32, OUTPUT_SIZE * sizeof(float)));
 
     // Double-buffered FP16 activations
     for (int i = 0; i < NUM_STREAMS; i++) {
@@ -480,6 +500,8 @@ void free_nn_cuda(NeuralNetworkCUDA *nn) {
     CUDA_CHECK(cudaFree(nn->d_grad_weights2));
     CUDA_CHECK(cudaFree(nn->d_grad_bias1));
     CUDA_CHECK(cudaFree(nn->d_grad_bias2));
+    CUDA_CHECK(cudaFree(nn->d_grad_bias1_fp32));
+    CUDA_CHECK(cudaFree(nn->d_grad_bias2_fp32));
 
     for (int i = 0; i < NUM_STREAMS; i++) {
         CUDA_CHECK(cudaFree(nn->d_fc1_output[i]));

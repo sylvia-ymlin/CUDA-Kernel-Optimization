@@ -65,6 +65,10 @@ nvcc -O2 -lcublas -o v6 v6.cu && ./v6
 
 # v7: Custom Fused GEMM (Educational)
 nvcc -O2 -lcublas -o v7 v7.cu && ./v7
+
+# v8: Pure FP16 (Tensor Core accelerated)
+nvcc -O2 -lcublas -arch=sm_75 -o v8 v8.cu && ./v8
+# For Ampere GPUs (A100, RTX 30xx), use -arch=sm_80
 ```
 
 ## Version Progression
