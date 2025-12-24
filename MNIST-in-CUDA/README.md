@@ -185,7 +185,7 @@ nvcc -O2 -lcublas -o v7 v7.cu && ./v7
 | v4.cu   | Naive CUDA    | 1.6s  | ~240x        | 0.143      | 92.44%        |
 | v5.cu   | cuBLAS        | 0.76s | ~506x        | 0.142      | 93.68%        |
 | v6.cu   | Streams+Fusion| 0.47s | ~818x        | 0.143      | 93.61%        |
-| v7.cu   | Fused GEMM    | 0.6s  | ~641x        | 0.143      | —             |
+| v7.cu   | Fused GEMM    | 0.81s | ~475x        | 0.143      | 93.63%        |
 | v8.cu   | Pure FP16     | 0.3s  | ~1282x       | 0.145      | —             |
 
 ![Speedup Comparison](assets/speedup_comparison.png)
@@ -249,6 +249,8 @@ nvcc -O2 -lcublas -o v7 v7.cu && ./v7
 ### Implemented in v7
 - **Custom Fused GEMM:** Tiled shared memory GEMM with fused bias + ReLU epilogue
 - Educational demonstration of why optimized libraries (cuBLAS/CUTLASS) are valuable
+- **Result:** 0.81s vs v6's 0.47s — **1.7× slower** than cuBLAS despite kernel fusion
+- Why slower? cuBLAS uses: register tiling, software pipelining, warp-level primitives, tensor cores (on supported GPUs)
 
 ### Implemented in v8
 - **Pure FP16:** Native half-precision for weights, activations, gradients, and GEMM accumulation
