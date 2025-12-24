@@ -1,0 +1,6 @@
+# Triton GPU kernel development dependencies
+# Requires NVIDIA GPU with CUDA support
+
+torch>=2.0.0
+triton>=2.1.0
+
