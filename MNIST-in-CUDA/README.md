@@ -55,12 +55,8 @@ python3 v2.py
 # v3: C implementation
 gcc -O2 -o v3 v3.c -lm && ./v3
 
-# v4-v8: CUDA implementations
+# v4: Naive CUDA kernels
 nvcc -O2 -o v4 v4.cu && ./v4
-nvcc -O2 -lcublas -o v5 v5.cu && ./v5
-nvcc -O2 -lcublas -o v6 v6.cu && ./v6
-nvcc -O2 -lcublas -o v7 v7.cu && ./v7
-nvcc -O2 -lcublas -o v8 v8.cu && ./v8
 ```
 
 ## Version Progression
@@ -105,10 +101,17 @@ nvcc -O2 -lcublas -o v8 v8.cu && ./v8
 ### v4.cu - Naive CUDA Kernels
 - **Framework:** CUDA C with custom kernels. "How to parallelize on GPU" (optimization)
 - **Features:**
-  - Custom matrix multiplication kernels
-  - Element-wise operations (ReLU, bias, softmax) on GPU
-  - Manual memory transfers between host and device
-- **Purpose:** First GPU implementation with basic CUDA kernels
+  - Custom naive matrix multiplication kernels (no shared memory tiling)
+  - Three matmul kernel variants: `A @ B`, `A @ B.T`, `A.T @ B`
+  - Element-wise kernels: ReLU, bias, softmax, weight update
+  - GPU memory management (`cudaMalloc`/`cudaFree`)
+  - Per-batch `cudaMemcpy` transfers (H2D and D2H)
+  - Loss computation still on CPU (requires D2H copy)
+  - `cudaDeviceSynchronize()` after every kernel
+  - CUDA error checking macro (`CUDA_CHECK`)
+  - Granular timing breakdown per operation
+- **Purpose:** First GPU implementation — direct port of v3.c with parallelization
+- **Note:** ~100x faster than v3 due to parallel execution; still inefficient (no cuBLAS, no shared memory)
 
 ### v5.cu - cuBLAS Optimized
 - **Framework:** CUDA with cuBLAS library
@@ -159,9 +162,9 @@ nvcc -O2 -lcublas -o v8 v8.cu && ./v8
 
 | Version | Implementation | Time | Speedup vs v3 | Final Loss |
 |---------|---------------|------|---------------|------------|
-| v1.py   | PyTorch CUDA  | 3.4s  | ~27x         | 0.141      |
-| v2.py   | NumPy CPU     | 21.0s | ~4x          | 0.142      |
-| v3.c    | C CPU         | 90.6s | 1x (baseline)| 0.142      |
+| v1.py   | PyTorch CUDA  | 3.4s  | ~112x        | 0.141      |
+| v2.py   | NumPy CPU     | 21.0s | ~18x         | 0.142      |
+| v3.c    | C CPU         | 379.7s| 1x (baseline)| 0.139      |
 | v4.cu   | Naive CUDA    | 0.9s  | 100x         | 0.142      |
 | v5.cu   | cuBLAS        | 0.4s  | 225x         | 0.142      |
 | v6.cu   | TF32 Optimized| 0.3s  | 300x         | 0.142      |
@@ -187,6 +190,14 @@ Pure NumPy implementation on CPU
 - Loss computation: 2.6%
 - Backward pass: 47.0%
 - Weight updates: 24.5%
+
+### v3 (C CPU)
+Pure C implementation with naive loops (no BLAS)
+- Data loading: 0.0%
+- Forward pass: 70.9%
+- Loss computation: 0.0%
+- Backward pass: 27.7%
+- Weight updates: 0.8%
 
 ### v5 (cuBLAS Optimized)
 Production-level performance
