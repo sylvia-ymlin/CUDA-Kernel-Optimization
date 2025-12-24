@@ -59,6 +59,9 @@ nvcc -O2 -o v4 v4.cu && ./v4
 
 # v5: cuBLAS optimized
 nvcc -O2 -lcublas -o v5 v5.cu && ./v5
+
+# v6: Streams + Pinned Memory + Fusion
+nvcc -O2 -lcublas -o v6 v6.cu && ./v6
 ```
 
 ## Version Progression
@@ -129,16 +132,15 @@ nvcc -O2 -lcublas -o v5 v5.cu && ./v5
 - **Purpose:** Production-quality implementation demonstrating cuBLAS usage
 - **Note:** ~2x faster than v4 due to optimized GEMM; timing simplified to H2D + GPU compute
 
-### v6.cu - Fully Optimized
+### v6.cu - Streams & Fusion Optimized
 - **Framework:** CUDA with cuBLAS + advanced optimizations
 - **Features:**
-  - GPU-side loss computation (eliminates 2 memory transfers per batch)
   - CUDA Streams for overlapping data transfer with compute
-  - TF32 Tensor Core math on Ampere+ GPUs
-  - Fused kernels (bias + ReLU combined)
-  - Pinned host memory for faster transfers
+  - Pinned host memory (`cudaMallocHost`) for faster H2D transfers
   - Double-buffered inputs for pipelining
-- **Purpose:** Maximum performance with all applicable GPU optimizations
+  - Fused kernels (bias + ReLU combined into single kernel)
+  - ~~TF32 Tensor Cores~~ — skipped (T4 is Turing SM 7.5, TF32 requires Ampere SM 8.0+)
+- **Purpose:** Maximum performance through transfer/compute overlap and kernel fusion
 
 ### v7.cu - Custom Fused GEMM (Educational)
 - **Framework:** CUDA with custom kernels + cuBLAS hybrid
