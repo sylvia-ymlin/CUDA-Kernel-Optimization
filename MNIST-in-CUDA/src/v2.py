@@ -172,8 +172,8 @@ def evaluate(model, X_test, y_test, batch_size):
         batch_y = y_test[i * batch_size:(i + 1) * batch_size]
         
         # Forward pass
-        hidden = relu(batch_x @ model.W1 + model.b1)
-        output = hidden @ model.W2 + model.b2
+        hidden = relu(batch_x @ model.weights1 + model.bias1)
+        output = hidden @ model.weights2 + model.bias2
         
         # Predictions
         predictions = np.argmax(output, axis=1)
