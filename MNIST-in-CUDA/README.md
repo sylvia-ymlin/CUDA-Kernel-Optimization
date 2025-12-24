@@ -6,8 +6,7 @@ This project implements a simple 2-layer MLP for MNIST digit classification, pro
 - **Dataset:** 10,000 MNIST training samples, batch size 32, 10 epochs
 - **Activation:** ReLU | **Loss:** Cross-entropy | **Optimizer:** SGD (lr=0.01)
 
-![MNIST CUDA](image.png)
-*Image source: [Infatoshi/mnist-cuda](https://github.com/Infatoshi/mnist-cuda)*
+![MNIST CUDA](mlp_training_flow.png)
 
 ## Environment
 
@@ -46,11 +45,8 @@ cd MNIST-in-CUDA/src
 # Download MNIST data (run once)
 python3 downloader.py
 
-# v1: PyTorch baseline (with timing instrumentation)
+# v1: PyTorch baseline
 python3 v1.py
-
-# v1_fast: Optimized PyTorch (for fair speed comparison)
-python3 v1_fast.py
 
 # v2: NumPy implementation
 python3 v2.py
@@ -60,6 +56,9 @@ gcc -O2 -o v3 v3.c -lm && ./v3
 
 # v4: Naive CUDA kernels
 nvcc -O2 -o v4 v4.cu && ./v4
+
+# Generate timing analysis plots
+python3 plot_timing.py
 ```
 
 ## Version Progression
@@ -74,17 +73,7 @@ nvcc -O2 -o v4 v4.cu && ./v4
   - `torch.set_float32_matmul_precision("high")` for optimized matmul
   - Detailed timing instrumentation per operation
 - **Purpose:** Establishes baseline performance and correctness reference
-
-### v1_fast.py - Optimized PyTorch
-- **Framework:** PyTorch with speed optimizations
-- **Optimizations vs v1.py:**
-  - GPU warmup (10 iterations before timing)
-  - `torch.compile()` for kernel fusion (PyTorch 2.0+)
-  - `cudnn.benchmark = True` for auto-tuning
-  - `zero_grad(set_to_none=True)` for faster gradient clearing
-  - Removed per-operation timing overhead
-- **Purpose:** Fair speed comparison with CUDA implementations
-- **Note:** T4 lacks TF32 Tensor Cores (Ampere+), so still slower than RTX 3090 benchmarks
+- **Note:** Slower than raw CUDA due to Python/autograd overhead; T4 lacks TF32 Tensor Cores (Ampere+ only)
 
 ### v2.py - NumPy Implementation
 - **Framework:** Pure NumPy (CPU-only). "How does it work mathematically" (understanding)
@@ -185,65 +174,19 @@ nvcc -O2 -o v4 v4.cu && ./v4
 | v7.cu   | Fused GEMM    | 0.6s  | 150x         | 0.143      |
 | v8.cu   | Pure FP16     | 0.3s  | 300x         | 0.145      |
 
+![Speedup Comparison](speedup_comparison.png)
+
 ## Timing Breakdown Analysis
 
-Each implementation provides detailed timing breakdowns:
+| Version | Total | Data Loading | Forward | Loss | Backward | Updates |
+|---------|-------|-------------|---------|------|----------|---------|
+| v1 PyTorch | 3.4s | 0.06s (1.9%) | 0.64s (18.8%) | 0.32s (9.5%) | 1.51s (44.5%) | 0.74s (21.8%) |
+| v2 NumPy | 21.0s | 0.02s (0.1%) | 5.42s (25.8%) | 0.55s (2.6%) | 9.87s (47.0%) | 5.15s (24.5%) |
+| v3 C | 379.7s | 0.00s (0.0%) | 269.2s (70.9%) | 0.00s (0.0%) | 105.2s (27.7%) | 3.04s (0.8%) |
+| v4 CUDA | 1.7s | 0.13s (7.5%) | 0.86s (50.6%) | 0.00s (0.1%) | 0.44s (25.7%) | 0.17s (10.0%) |
 
-### v1 (PyTorch)
-Baseline PyTorch implementation with cuBLAS backend (TF32 precision enabled)
-- Data loading: 1.9%
-- Forward pass: 18.8%
-- Loss computation: 9.5%
-- Backward pass: 44.5%
-- Weight updates: 21.8%
+![Timing Analysis](timing_analysis.png)
 
-### v2 (NumPy)
-Pure NumPy implementation on CPU
-- Data loading: 0.1%
-- Forward pass: 25.8%
-- Loss computation: 2.6%
-- Backward pass: 47.0%
-- Weight updates: 24.5%
-
-### v3 (C CPU)
-Pure C implementation with naive loops (no BLAS)
-- Data loading: 0.0%
-- Forward pass: 70.9%
-- Loss computation: 0.0%
-- Backward pass: 27.7%
-- Weight updates: 0.8%
-
-### v4 (Naive CUDA)
-First GPU implementation with custom kernels
-- Data loading: 7.5% (per-batch cudaMemcpy)
-- Forward pass: 50.6%
-- Loss computation: 0.1%
-- Backward pass: 25.7%
-- Weight updates: 10.0%
-
-### v5 (cuBLAS Optimized)
-Production-level performance
-- GPU compute (forward + backward + updates): ~60% of time
-- Memory transfers (H2D + D2H): ~30% of time
-- Host computation (loss calculation): ~10% of time
-
-### v6 (Fully Optimized)
-Maximum GPU utilization
-- GPU compute: ~95% of time (loss computation moved to GPU)
-- Memory transfers: ~4% of time (overlapped with compute via streams)
-- Overhead: ~1% of time
-
-### v7 (Custom Fused GEMM)
-Educational implementation
-- GPU compute: ~97% of time (custom tiled GEMM slower than cuBLAS)
-- Memory transfers: ~1% of time
-- Shows the performance gap between naive and optimized GEMM implementations
-
-### v8 (Pure FP16)
-Maximum performance implementation
-- GPU compute: ~95% of time (native FP16 Tensor Cores)
-- Memory transfers: ~3% of time (half the bandwidth of FP32)
-- Fastest version due to native half-precision throughout
 
 ## Performance Insights
 
