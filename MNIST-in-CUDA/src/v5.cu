@@ -62,14 +62,18 @@ typedef struct {
 void load_data(const char *filename, float *data, int size) {
     FILE *f = fopen(filename, "rb");
     if (!f) { perror("fopen data"); exit(EXIT_FAILURE); }
-    fread(data, sizeof(float), size, f);
+    if (fread(data, sizeof(float), size, f) != (size_t)size) {
+        perror("fread data"); exit(EXIT_FAILURE);
+    }
     fclose(f);
 }
 
 void load_labels(const char *filename, int *labels, int size) {
     FILE *f = fopen(filename, "rb");
     if (!f) { perror("fopen labels"); exit(EXIT_FAILURE); }
-    fread(labels, sizeof(int), size, f);
+    if (fread(labels, sizeof(int), size, f) != (size_t)size) {
+        perror("fread labels"); exit(EXIT_FAILURE);
+    }
     fclose(f);
 }
 

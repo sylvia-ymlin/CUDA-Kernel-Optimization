@@ -37,16 +37,16 @@ plt.rcParams.update({
 
 # Data (v5 has different timing: H2D + GPU compute only)
 versions = ['v1 PyTorch', 'v2 NumPy', 'v3 C', 'v4 CUDA', 'v5 cuBLAS']
-totals = [3.4, 21.0, 379.7, 1.7, 0.86]
+totals = [3.4, 21.0, 379.7, 1.7, 0.72]
 
-# For v5: Data Loading = H2D (0.13s), GPU Compute (0.73s) combines Forward+Loss+Backward+Updates
+# For v5: Data Loading = H2D (0.13s), GPU Compute (0.59s) combines Forward+Loss+Backward+Updates
 data = {
     'Data Loading': [0.06, 0.02, 0.00, 0.13, 0.13],
     'Forward': [0.64, 5.42, 269.2, 0.86, 0.00],
     'Loss': [0.32, 0.55, 0.00, 0.00, 0.00],
     'Backward': [1.51, 9.87, 105.2, 0.44, 0.00],
     'Updates': [0.74, 5.15, 3.04, 0.17, 0.00],
-    'GPU Compute': [0.00, 0.00, 0.00, 0.00, 0.73],  # v5 only (cuBLAS combined)
+    'GPU Compute': [0.00, 0.00, 0.00, 0.00, 0.59],  # v5 only (cuBLAS combined)
 }
 
 # ============ Figure 1: Percentage Breakdown (Horizontal) ============
@@ -91,7 +91,7 @@ flow_data = [
     {'name': 'v2.py', 'tech': 'NumPy', 'time': '21.0s', 'speedup': '18×', 'color': MORANDI['sage']},
     {'name': 'v3.c', 'tech': 'C CPU', 'time': '379.7s', 'speedup': '1× (base)', 'color': MORANDI['terracotta']},
     {'name': 'v4.cu', 'tech': 'CUDA', 'time': '1.7s', 'speedup': '223×', 'color': MORANDI['blush']},
-    {'name': 'v5.cu', 'tech': 'cuBLAS', 'time': '0.86s', 'speedup': '444×', 'color': MORANDI['mauve']},
+    {'name': 'v5.cu', 'tech': 'cuBLAS', 'time': '0.72s', 'speedup': '527×', 'color': MORANDI['mauve']},
 ]
 
 # Box positions

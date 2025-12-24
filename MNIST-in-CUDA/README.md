@@ -173,7 +173,7 @@ nvcc -O2 -lcublas -o v5 v5.cu && ./v5
 | v2.py   | NumPy CPU     | 21.0s | ~18x         | 0.142      |
 | v3.c    | C CPU         | 379.7s| 1x (baseline)| 0.139      |
 | v4.cu   | Naive CUDA    | 1.7s  | ~223x        | 0.144      |
-| v5.cu   | cuBLAS        | 0.86s | ~444x        | 0.142      |
+| v5.cu   | cuBLAS        | 0.72s | ~527x        | 0.142      |
 | v6.cu   | TF32 Optimized| 0.3s  | 300x         | 0.142      |
 | v7.cu   | Fused GEMM    | 0.6s  | 150x         | 0.143      |
 | v8.cu   | Pure FP16     | 0.3s  | 300x         | 0.145      |
@@ -182,13 +182,26 @@ nvcc -O2 -lcublas -o v5 v5.cu && ./v5
 
 ## Timing Breakdown Analysis
 
-| Version | Total | Data Loading | Forward | Loss | Backward | Updates |
-|---------|-------|-------------|---------|------|----------|---------|
-| v1 PyTorch | 3.4s | 0.06s (1.9%) | 0.64s (18.8%) | 0.32s (9.5%) | 1.51s (44.5%) | 0.74s (21.8%) |
-| v2 NumPy | 21.0s | 0.02s (0.1%) | 5.42s (25.8%) | 0.55s (2.6%) | 9.87s (47.0%) | 5.15s (24.5%) |
-| v3 C | 379.7s | 0.00s (0.0%) | 269.2s (70.9%) | 0.00s (0.0%) | 105.2s (27.7%) | 3.04s (0.8%) |
-| v4 CUDA | 1.7s | 0.13s (7.5%) | 0.86s (50.6%) | 0.00s (0.1%) | 0.44s (25.7%) | 0.17s (10.0%) |
-| v5 cuBLAS | 0.86s | 0.13s (14.8%) | — | — | — | 0.73s GPU (85.1%) |
+<table>
+<tr>
+  <th>Version</th><th>Total</th><th>Data Loading</th><th>Forward</th><th>Loss</th><th>Backward</th><th>Updates</th>
+</tr>
+<tr>
+  <td>v1 PyTorch</td><td>3.4s</td><td>0.06s (1.9%)</td><td>0.64s (18.8%)</td><td>0.32s (9.5%)</td><td>1.51s (44.5%)</td><td>0.74s (21.8%)</td>
+</tr>
+<tr>
+  <td>v2 NumPy</td><td>21.0s</td><td>0.02s (0.1%)</td><td>5.42s (25.8%)</td><td>0.55s (2.6%)</td><td>9.87s (47.0%)</td><td>5.15s (24.5%)</td>
+</tr>
+<tr>
+  <td>v3 C</td><td>379.7s</td><td>0.00s (0.0%)</td><td>269.2s (70.9%)</td><td>0.00s (0.0%)</td><td>105.2s (27.7%)</td><td>3.04s (0.8%)</td>
+</tr>
+<tr>
+  <td>v4 CUDA</td><td>1.7s</td><td>0.13s (7.5%)</td><td>0.86s (50.6%)</td><td>0.00s (0.1%)</td><td>0.44s (25.7%)</td><td>0.17s (10.0%)</td>
+</tr>
+<tr>
+  <td>v5 cuBLAS</td><td>0.72s</td><td>0.13s (17.7%)</td><td colspan="4" align="center">0.59s GPU compute (82.2%)</td>
+</tr>
+</table>
 
 ![Timing Analysis](assets/timing_analysis.png)
 
