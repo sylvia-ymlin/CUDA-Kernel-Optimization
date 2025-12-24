@@ -37,7 +37,7 @@ High-performance CUDA kernel implementations demonstrating systematic GPU optimi
 
 # Memory Hierarchy & Roofline
 
-![Memory Hierarchy](figures/memory_hierarchy.png)
+![Memory Hierarchy](assets/memory_hierarchy.png)
 
 | Level | Bandwidth | Latency |
 |-------|-----------|---------|
@@ -46,7 +46,7 @@ High-performance CUDA kernel implementations demonstrating systematic GPU optimi
 | L2 Cache | ~3 TB/s | ~200 cycles |
 | Global (DRAM) | 320 GB/s | ~400 cycles |
 
-![Roofline Model](figures/roofline_model.png)
+![Roofline Model](assets/roofline_model.png)
 
 | Kernel | Arithmetic Intensity | Bound | Limiter |
 |--------|---------------------|-------|---------|
@@ -71,7 +71,7 @@ High-performance CUDA kernel implementations demonstrating systematic GPU optimi
 
 Progressive optimization from naive (7% cuBLAS) to optimized (82% cuBLAS):
 
-![SGEMM Tiling](figures/sgemm_tiling.png)
+![SGEMM Tiling](assets/sgemm_tiling.png)
 
 *Block tiling → Thread tiling → Register accumulation*
 
@@ -141,7 +141,7 @@ v5 (float4+shfl)    ████████████████████
 
 ### Bank Conflict Resolution
 
-![Bank Conflicts](figures/bank_conflicts.png)
+![Bank Conflicts](assets/bank_conflicts.png)
 
 32×32 tile → 32-way bank conflict on column read  
 **Fix:** Pad to 32×33 → **30% improvement**
@@ -176,7 +176,7 @@ cuBLAS        ██████████████████████
 
 ### Occupancy vs ILP
 
-![Occupancy vs ILP](figures/occupancy_ilp.png)
+![Occupancy vs ILP](assets/occupancy_ilp.png)
 
 v6/v7: ~128 registers/thread, 25% occupancy → register reuse removes shared memory bottleneck → **2.7x gain**
 
@@ -227,7 +227,7 @@ cuda-kernels-from-scratch/
 │   └── SGEMM/           # v1-v7 GEMM implementations
 ├── tests/               # Correctness + performance benchmarks
 ├── profiling/           # Nsight Compute/Systems notes
-├── figures/             # Generated diagrams
+├── assets/             # Generated diagrams
 └── CMakeLists.txt
 ```
 

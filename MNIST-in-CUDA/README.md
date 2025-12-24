@@ -6,7 +6,7 @@ This project implements a simple 2-layer MLP for MNIST digit classification, pro
 - **Dataset:** 10,000 MNIST training samples, batch size 32, 10 epochs
 - **Activation:** ReLU | **Loss:** Cross-entropy | **Optimizer:** SGD (lr=0.01)
 
-![MNIST CUDA](mlp_training_flow.png)
+![MNIST CUDA](assets/mlp_training_flow.png)
 
 ## Environment
 
@@ -57,8 +57,8 @@ gcc -O2 -o v3 v3.c -lm && ./v3
 # v4: Naive CUDA kernels
 nvcc -O2 -o v4 v4.cu && ./v4
 
-# Generate timing analysis plots
-python3 plot_timing.py
+# v5: cuBLAS optimized
+nvcc -O2 -lcublas -o v5 v5.cu && ./v5
 ```
 
 ## Version Progression
@@ -117,13 +117,17 @@ python3 plot_timing.py
 - **Note:** ~100x faster than v3 due to parallel execution; still inefficient (no cuBLAS, no shared memory)
 
 ### v5.cu - cuBLAS Optimized
-- **Framework:** CUDA with cuBLAS library
+- **Framework:** CUDA with cuBLAS library. "How to use optimized libraries" (production)
 - **Features:**
-  - cuBLAS optimized matrix operations (SGEMM, SAXPY)
-  - Persistent memory buffers to reduce allocations
-  - Minimal host-device synchronization points
-  - Optimized memory access patterns
-- **Purpose:** Production-quality implementation with maximum performance
+  - `cublasSgemm` for matrix multiplication (replaces naive kernels)
+  - `cublasSaxpy` for weight updates (W -= lr * dW)
+  - Persistent memory buffers (no per-batch cudaMalloc/cudaFree)
+  - GPU-side softmax + cross-entropy + backward in single kernel
+  - Labels stored on GPU (`d_labels`) to avoid D2H transfer
+  - Minimal synchronization (only at batch end, not after each kernel)
+  - Modular code: `forward_pass_only()`, `backward_pass_only()`, `update_weights_only()`
+- **Purpose:** Production-quality implementation demonstrating cuBLAS usage
+- **Note:** ~4x faster than v4 due to optimized GEMM and reduced memory operations
 
 ### v6.cu - Fully Optimized
 - **Framework:** CUDA with cuBLAS + advanced optimizations
@@ -174,7 +178,7 @@ python3 plot_timing.py
 | v7.cu   | Fused GEMM    | 0.6s  | 150x         | 0.143      |
 | v8.cu   | Pure FP16     | 0.3s  | 300x         | 0.145      |
 
-![Speedup Comparison](speedup_comparison.png)
+![Speedup Comparison](assets/speedup_comparison.png)
 
 ## Timing Breakdown Analysis
 
@@ -185,7 +189,7 @@ python3 plot_timing.py
 | v3 C | 379.7s | 0.00s (0.0%) | 269.2s (70.9%) | 0.00s (0.0%) | 105.2s (27.7%) | 3.04s (0.8%) |
 | v4 CUDA | 1.7s | 0.13s (7.5%) | 0.86s (50.6%) | 0.00s (0.1%) | 0.44s (25.7%) | 0.17s (10.0%) |
 
-![Timing Analysis](timing_analysis.png)
+![Timing Analysis](assets/timing_analysis.png)
 
 
 ## Performance Insights

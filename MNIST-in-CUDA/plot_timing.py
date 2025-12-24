@@ -74,7 +74,7 @@ ax.set_title('MNIST MLP Training · Time Breakdown', fontsize=14, fontweight='bo
 ax.grid(axis='x', alpha=0.3, color=MORANDI['grid'])
 
 plt.tight_layout()
-plt.savefig('timing_analysis.png', dpi=150, bbox_inches='tight', facecolor=MORANDI['bg'])
+plt.savefig('../assets/timing_analysis.png', dpi=150, bbox_inches='tight', facecolor=MORANDI['bg'])
 print("Saved: timing_analysis.png")
 
 # ============ Figure 2: Version Progression Flowchart ============
@@ -145,6 +145,6 @@ ax2.text(5, 4.9, '784 → 1024 → 10  |  10 epochs  |  batch 32',
          ha='center', va='center', fontsize=10, color=MORANDI['text'], alpha=0.7)
 
 plt.tight_layout()
-plt.savefig('speedup_comparison.png', dpi=150, bbox_inches='tight', facecolor=MORANDI['bg'])
+plt.savefig('./assets/speedup_comparison.png', dpi=150, bbox_inches='tight', facecolor=MORANDI['bg'])
 print("Saved: speedup_comparison.png")
 
