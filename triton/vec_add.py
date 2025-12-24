@@ -52,7 +52,7 @@ def add(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
     return output
 
 # use the triton test utility to run the kernel
-triton.testing.perf_report(
+@triton.testing.perf_report(
     triton.testing.Benchmark( # define the configuration for the benchmark
         x_names=["size"], # use for the x-axis of the plot
         x_vals=[2**i for i in range(12, 28, 1)],
@@ -60,9 +60,8 @@ triton.testing.perf_report(
         line_arg="provider", # use for the legend
         line_vals=['triton', 'torch'],
         line_names=["Triton", "Torch"],
-        line_styles=[('blue',"-"), ("green","-")],
-        y_label="GB/s",
-        plot_name="vec_add performance",
+        ylabel="GB/s",
+        plot_name="vec_add_performance",
         args={},
     ))
 
