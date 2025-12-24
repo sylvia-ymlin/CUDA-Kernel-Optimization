@@ -38,17 +38,17 @@ plt.rcParams.update({
 
 # Data (v5/v6 have different timing: async operations)
 versions = ['v1 PyTorch', 'v2 NumPy', 'v3 C', 'v4 CUDA', 'v5 cuBLAS', 'v6 Streams']
-totals = [3.4, 21.0, 379.7, 1.7, 0.72, 0.47]
+totals = [3.3, 22.4, 384.6, 1.6, 0.76, 0.47]
 
 # Calculate "Other" to make each version sum to 100%
 # Other includes: Python interpreter overhead, CUDA init, epoch loops, print, etc.
 raw_data = {
-    'Data Loading': [0.06, 0.02, 0.00, 0.13, 0.13, 0.01],
-    'Forward': [0.64, 5.42, 269.2, 0.86, 0.00, 0.00],
-    'Loss': [0.32, 0.55, 0.00, 0.00, 0.00, 0.00],
-    'Backward': [1.51, 9.87, 105.2, 0.44, 0.00, 0.00],
-    'Updates': [0.74, 5.15, 3.04, 0.17, 0.00, 0.00],
-    'GPU Compute': [0.00, 0.00, 0.00, 0.00, 0.59, 0.46],
+    'Data Loading': [0.065, 0.016, 0.000, 0.135, 0.129, 0.013],
+    'Forward': [0.666, 5.655, 272.2, 0.731, 0.00, 0.00],
+    'Loss': [0.327, 0.597, 0.002, 0.002, 0.00, 0.00],
+    'Backward': [1.449, 10.219, 106.4, 0.436, 0.00, 0.00],
+    'Updates': [0.592, 5.919, 3.38, 0.168, 0.00, 0.00],
+    'GPU Compute': [0.00, 0.00, 0.00, 0.00, 0.631, 0.450],  # v5: GPU, v6: issue+sync
 }
 
 # Calculate Other = total - sum(all categories)
@@ -107,14 +107,14 @@ ax2.set_xlim(0, 14)
 ax2.set_ylim(0, 6)
 ax2.axis('off')
 
-# Version data
+# Version data (updated with latest benchmark results)
 flow_data = [
-    {'name': 'v1.py', 'tech': 'PyTorch', 'time': '3.4s', 'speedup': '112×', 'color': COLORS['blue']},
-    {'name': 'v2.py', 'tech': 'NumPy', 'time': '21.0s', 'speedup': '18×', 'color': COLORS['green']},
-    {'name': 'v3.c', 'tech': 'C CPU', 'time': '379.7s', 'speedup': '1× (base)', 'color': COLORS['orange']},
-    {'name': 'v4.cu', 'tech': 'CUDA', 'time': '1.7s', 'speedup': '223×', 'color': COLORS['pink']},
-    {'name': 'v5.cu', 'tech': 'cuBLAS', 'time': '0.72s', 'speedup': '527×', 'color': COLORS['yellow']},
-    {'name': 'v6.cu', 'tech': 'Streams', 'time': '0.47s', 'speedup': '808×', 'color': COLORS['cyan']},
+    {'name': 'v1.py', 'tech': 'PyTorch', 'time': '3.3s', 'speedup': '117×', 'color': COLORS['blue']},
+    {'name': 'v2.py', 'tech': 'NumPy', 'time': '22.4s', 'speedup': '17×', 'color': COLORS['green']},
+    {'name': 'v3.c', 'tech': 'C CPU', 'time': '384.6s', 'speedup': '1× (base)', 'color': COLORS['orange']},
+    {'name': 'v4.cu', 'tech': 'CUDA', 'time': '1.6s', 'speedup': '240×', 'color': COLORS['pink']},
+    {'name': 'v5.cu', 'tech': 'cuBLAS', 'time': '0.76s', 'speedup': '506×', 'color': COLORS['yellow']},
+    {'name': 'v6.cu', 'tech': 'Streams', 'time': '0.47s', 'speedup': '818×', 'color': COLORS['cyan']},
 ]
 
 # Box positions

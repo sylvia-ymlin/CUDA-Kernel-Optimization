@@ -62,6 +62,9 @@ nvcc -O2 -lcublas -o v5 v5.cu && ./v5
 
 # v6: Streams + Pinned Memory + Fusion
 nvcc -O2 -lcublas -o v6 v6.cu && ./v6
+
+# v7: Custom Fused GEMM (Educational)
+nvcc -O2 -lcublas -o v7 v7.cu && ./v7
 ```
 
 ## Version Progression
@@ -148,12 +151,14 @@ nvcc -O2 -lcublas -o v6 v6.cu && ./v6
 ### v7.cu - Custom Fused GEMM (Educational)
 - **Framework:** CUDA with custom kernels + cuBLAS hybrid
 - **Features:**
-  - Custom fused GEMM + bias + ReLU kernel (forward pass)
-  - Tiled shared memory GEMM (32x32 tiles)
-  - cuBLAS for backward pass (reliable gradients)
-  - All v6 optimizations (streams, pinned memory, GPU-side loss)
+  - `fused_gemm_bias_relu_kernel`: Custom tiled GEMM with epilogue fusion (FC1)
+  - `fused_gemm_bias_kernel`: Custom tiled GEMM + bias only (FC2, no ReLU)
+  - 32×32 shared memory tiles (`TILE_SIZE=32`)
+  - Epilogue fusion: GEMM → bias → ReLU in registers, single global write
+  - cuBLAS for backward pass only (gradients need accuracy)
+  - All v6 optimizations retained (streams, pinned memory, double buffering)
 - **Purpose:** Demonstrates how kernel fusion works at the CUDA level
-- **Note:** Slower than v6 — shows why cuBLAS/CUTLASS exist (writing efficient GEMM is hard)
+- **Note:** Slower than v6 — shows why cuBLAS/CUTLASS exist (our simple tiling vs. their register tiling, software pipelining, tensor cores)
 
 ### v8.cu - Pure FP16 Implementation
 - **Framework:** CUDA with cuBLAS GemmEx + native FP16
@@ -172,16 +177,16 @@ nvcc -O2 -lcublas -o v6 v6.cu && ./v6
 
 ## Performance Comparison
 
-| Version | Implementation | Time | Speedup vs v3 | Final Loss |
-|---------|---------------|------|---------------|------------|
-| v1.py   | PyTorch CUDA  | 3.4s  | ~112x        | 0.141      |
-| v2.py   | NumPy CPU     | 21.0s | ~18x         | 0.142      |
-| v3.c    | C CPU         | 379.7s| 1x (baseline)| 0.139      |
-| v4.cu   | Naive CUDA    | 1.7s  | ~223x        | 0.144      |
-| v5.cu   | cuBLAS        | 0.72s | ~527x        | 0.142      |
-| v6.cu   | Streams+Fusion| 0.47s | ~808x        | 0.143      |
-| v7.cu   | Fused GEMM    | 0.6s  | 150x         | 0.143      |
-| v8.cu   | Pure FP16     | 0.3s  | 300x         | 0.145      |
+| Version | Implementation | Time | Speedup vs v3 | Final Loss | Test Accuracy |
+|---------|---------------|------|---------------|------------|---------------|
+| v1.py   | PyTorch CUDA  | 3.3s  | ~117x        | 0.144      | 93.40%        |
+| v2.py   | NumPy CPU     | 22.4s | ~17x         | 0.142      | 93.77%        |
+| v3.c    | C CPU         | 384.6s| 1x (baseline)| 0.144      | 92.64%        |
+| v4.cu   | Naive CUDA    | 1.6s  | ~240x        | 0.143      | 92.44%        |
+| v5.cu   | cuBLAS        | 0.76s | ~506x        | 0.142      | 93.68%        |
+| v6.cu   | Streams+Fusion| 0.47s | ~818x        | 0.143      | 93.61%        |
+| v7.cu   | Fused GEMM    | 0.6s  | ~641x        | 0.143      | —             |
+| v8.cu   | Pure FP16     | 0.3s  | ~1282x       | 0.145      | —             |
 
 ![Speedup Comparison](assets/speedup_comparison.png)
 
@@ -189,25 +194,25 @@ nvcc -O2 -lcublas -o v6 v6.cu && ./v6
 
 <table>
 <tr>
-  <th>Version</th><th>Total</th><th>Data Loading</th><th>Forward</th><th>Loss</th><th>Backward</th><th>Updates</th>
+  <th>Version</th><th>Total</th><th>Data Loading</th><th>Forward</th><th>Loss</th><th>Backward</th><th>Updates</th><th>Other</th>
 </tr>
 <tr>
-  <td>v1 PyTorch</td><td>3.4s</td><td>0.06s (1.9%)</td><td>0.64s (18.8%)</td><td>0.32s (9.5%)</td><td>1.51s (44.5%)</td><td>0.74s (21.8%)</td>
+  <td>v1 PyTorch</td><td>3.3s</td><td>0.07s (2.0%)</td><td>0.67s (20.2%)</td><td>0.33s (9.9%)</td><td>1.45s (43.9%)</td><td>0.59s (17.9%)</td><td>0.20s (6.1%)</td>
 </tr>
 <tr>
-  <td>v2 NumPy</td><td>21.0s</td><td>0.02s (0.1%)</td><td>5.42s (25.8%)</td><td>0.55s (2.6%)</td><td>9.87s (47.0%)</td><td>5.15s (24.5%)</td>
+  <td>v2 NumPy</td><td>22.4s</td><td>0.02s (0.1%)</td><td>5.66s (25.2%)</td><td>0.60s (2.7%)</td><td>10.22s (45.6%)</td><td>5.92s (26.4%)</td><td>0.03s (0.1%)</td>
 </tr>
 <tr>
-  <td>v3 C</td><td>379.7s</td><td>0.00s (0.0%)</td><td>269.2s (70.9%)</td><td>0.00s (0.0%)</td><td>105.2s (27.7%)</td><td>3.04s (0.8%)</td>
+  <td>v3 C</td><td>384.6s</td><td>0.00s (0.0%)</td><td>272.2s (70.8%)</td><td>0.00s (0.0%)</td><td>106.4s (27.7%)</td><td>3.38s (0.9%)</td><td>2.61s (0.7%)</td>
 </tr>
 <tr>
-  <td>v4 CUDA</td><td>1.7s</td><td>0.13s (7.5%)</td><td>0.86s (50.6%)</td><td>0.00s (0.1%)</td><td>0.44s (25.7%)</td><td>0.17s (10.0%)</td>
+  <td>v4 CUDA</td><td>1.6s</td><td>0.14s (8.5%)</td><td>0.73s (46.3%)</td><td>0.00s (0.1%)</td><td>0.44s (27.6%)</td><td>0.17s (10.7%)</td><td>0.11s (6.8%)</td>
 </tr>
 <tr>
-  <td>v5 cuBLAS</td><td>0.72s</td><td>0.13s (17.7%)</td><td colspan="4" align="center">0.59s GPU compute (82.2%)</td>
+  <td>v5 cuBLAS</td><td>0.76s</td><td>0.13s (17.0%)</td><td colspan="4" align="center">0.63s GPU compute (83.0%)</td><td>0.00s (0.0%)</td>
 </tr>
 <tr>
-  <td>v6 Streams</td><td>0.47s</td><td>0.01s (2.8%)</td><td colspan="2" align="center">0.21s issue (45%)</td><td colspan="2" align="center">0.25s sync (52%)</td>
+  <td>v6 Streams</td><td>0.47s</td><td>0.01s (2.8%)</td><td colspan="2" align="center">0.21s issue (45%)</td><td colspan="2" align="center">0.24s sync (52%)</td><td>0.00s (0.3%)</td>
 </tr>
 </table>
 
