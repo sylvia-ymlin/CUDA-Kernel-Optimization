@@ -9,14 +9,33 @@ This project implements a simple 2-layer MLP for MNIST digit classification, pro
 ![MNIST CUDA](image.png)
 *Image source: [Infatoshi/mnist-cuda](https://github.com/Infatoshi/mnist-cuda)*
 
+## Environment
+
+| Property | Value |
+|----------|-------|
+| Platform | Ubuntu 22.04.5 LTS (GCP) |
+| GPU | NVIDIA Tesla T4 |
+| CUDA Capability | 7.5 |
+| Global Memory | 14930 MB |
+| CUDA Version | 12.1 |
+
 ## Prerequisites
 
 ```bash
+# Check Python version
+python3 --version
+
+# Check NumPy version
+python3 -c "import numpy; print(f'NumPy: {numpy.__version__}')"
+
+# Check PyTorch and CUDA availability
+python3 -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}'); print(f'CUDA version: {torch.version.cuda}')"
+
 # Check CUDA installation
 nvcc --version
 
-# Check your GPU's compute capability (5.0 or greater required)
-nvidia-smi --query-gpu=compute_cap --format=csv,noheader
+# Check GPU info
+nvidia-smi --query-gpu=name,compute_cap,memory.total --format=csv
 ```
 
 ## Version Progression
@@ -38,6 +57,10 @@ nvidia-smi --query-gpu=compute_cap --format=csv,noheader
   - Manual forward/backward pass implementation
   - Custom gradient computation and weight updates
   - He initialization for weights
+  - MNIST normalization (mean=0.1307, std=0.3081)
+  - Manual softmax with numerical stability (`x - max(x)`)
+  - Manual cross-entropy loss computation
+  - Detailed timing instrumentation per operation
 - **Purpose:** Demonstrates the underlying math without GPU acceleration
 
 ### v3.c - C/CPU Implementation
@@ -106,7 +129,7 @@ nvidia-smi --query-gpu=compute_cap --format=csv,noheader
 | Version | Implementation | Time | Speedup vs v3 | Final Loss |
 |---------|---------------|------|---------------|------------|
 | v1.py   | PyTorch CUDA  | 3.4s  | ~27x         | 0.141      |
-| v2.py   | NumPy CPU     | ~12s  | ~8x          | 0.142      |
+| v2.py   | NumPy CPU     | 21.0s | ~4x          | 0.142      |
 | v3.c    | C CPU         | 90.6s | 1x (baseline)| 0.142      |
 | v4.cu   | Naive CUDA    | 0.9s  | 100x         | 0.142      |
 | v5.cu   | cuBLAS        | 0.4s  | 225x         | 0.142      |
@@ -125,6 +148,14 @@ Baseline PyTorch implementation with cuBLAS backend (TF32 precision enabled)
 - Loss computation: 9.5%
 - Backward pass: 44.5%
 - Weight updates: 21.8%
+
+### v2 (NumPy)
+Pure NumPy implementation on CPU
+- Data loading: 0.1%
+- Forward pass: 25.8%
+- Loss computation: 2.6%
+- Backward pass: 47.0%
+- Weight updates: 24.5%
 
 ### v5 (cuBLAS Optimized)
 Production-level performance
