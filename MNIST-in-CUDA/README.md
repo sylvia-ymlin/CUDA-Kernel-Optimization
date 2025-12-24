@@ -46,8 +46,11 @@ cd MNIST-in-CUDA/src
 # Download MNIST data (run once)
 python3 downloader.py
 
-# v1: PyTorch baseline
+# v1: PyTorch baseline (with timing instrumentation)
 python3 v1.py
+
+# v1_fast: Optimized PyTorch (for fair speed comparison)
+python3 v1_fast.py
 
 # v2: NumPy implementation
 python3 v2.py
@@ -71,6 +74,17 @@ nvcc -O2 -o v4 v4.cu && ./v4
   - `torch.set_float32_matmul_precision("high")` for optimized matmul
   - Detailed timing instrumentation per operation
 - **Purpose:** Establishes baseline performance and correctness reference
+
+### v1_fast.py - Optimized PyTorch
+- **Framework:** PyTorch with speed optimizations
+- **Optimizations vs v1.py:**
+  - GPU warmup (10 iterations before timing)
+  - `torch.compile()` for kernel fusion (PyTorch 2.0+)
+  - `cudnn.benchmark = True` for auto-tuning
+  - `zero_grad(set_to_none=True)` for faster gradient clearing
+  - Removed per-operation timing overhead
+- **Purpose:** Fair speed comparison with CUDA implementations
+- **Note:** T4 lacks TF32 Tensor Cores (Ampere+), so still slower than RTX 3090 benchmarks
 
 ### v2.py - NumPy Implementation
 - **Framework:** Pure NumPy (CPU-only). "How does it work mathematically" (understanding)
@@ -165,7 +179,7 @@ nvcc -O2 -o v4 v4.cu && ./v4
 | v1.py   | PyTorch CUDA  | 3.4s  | ~112x        | 0.141      |
 | v2.py   | NumPy CPU     | 21.0s | ~18x         | 0.142      |
 | v3.c    | C CPU         | 379.7s| 1x (baseline)| 0.139      |
-| v4.cu   | Naive CUDA    | 0.9s  | 100x         | 0.142      |
+| v4.cu   | Naive CUDA    | 1.7s  | ~223x        | 0.144      |
 | v5.cu   | cuBLAS        | 0.4s  | 225x         | 0.142      |
 | v6.cu   | TF32 Optimized| 0.3s  | 300x         | 0.142      |
 | v7.cu   | Fused GEMM    | 0.6s  | 150x         | 0.143      |
@@ -198,6 +212,14 @@ Pure C implementation with naive loops (no BLAS)
 - Loss computation: 0.0%
 - Backward pass: 27.7%
 - Weight updates: 0.8%
+
+### v4 (Naive CUDA)
+First GPU implementation with custom kernels
+- Data loading: 7.5% (per-batch cudaMemcpy)
+- Forward pass: 50.6%
+- Loss computation: 0.1%
+- Backward pass: 25.7%
+- Weight updates: 10.0%
 
 ### v5 (cuBLAS Optimized)
 Production-level performance
