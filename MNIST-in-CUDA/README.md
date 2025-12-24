@@ -24,9 +24,12 @@ nvidia-smi --query-gpu=compute_cap --format=csv,noheader
 ### v1.py - PyTorch Baseline
 - **Framework:** PyTorch with CUDA tensors
 - **Features:**
-  - High-level PyTorch operations (Linear, ReLU, CrossEntropyLoss)
-  - GPU tensors with automatic memory management
-  - Built-in optimizations (cuDNN, etc.)
+  - High-level PyTorch operations (`nn.Linear`, `nn.ReLU`, `nn.CrossEntropyLoss`)
+  - Data pre-loaded to GPU (no per-batch transfers)
+  - Custom He initialization for weights (matching NumPy/C implementations)
+  - MNIST normalization (mean=0.1307, std=0.3081)
+  - `torch.set_float32_matmul_precision("high")` for optimized matmul
+  - Detailed timing instrumentation per operation
 - **Purpose:** Establishes baseline performance and correctness reference
 
 ### v2.py - NumPy Implementation
@@ -102,7 +105,7 @@ nvidia-smi --query-gpu=compute_cap --format=csv,noheader
 
 | Version | Implementation | Time | Speedup vs v3 | Final Loss |
 |---------|---------------|------|---------------|------------|
-| v1.py   | PyTorch CUDA  | ~0.5s | ~180x        | 0.142      |
+| v1.py   | PyTorch CUDA  | 3.4s  | ~27x         | 0.141      |
 | v2.py   | NumPy CPU     | ~12s  | ~8x          | 0.142      |
 | v3.c    | C CPU         | 90.6s | 1x (baseline)| 0.142      |
 | v4.cu   | Naive CUDA    | 0.9s  | 100x         | 0.142      |
@@ -116,11 +119,12 @@ nvidia-smi --query-gpu=compute_cap --format=csv,noheader
 Each implementation provides detailed timing breakdowns:
 
 ### v1 (PyTorch)
-High-level operations with cuDNN optimization
-- Forward pass: ~40% of time
-- Backward pass: ~50% of time
-- Weight updates: ~5% of time
-- Data loading: ~5% of time
+Baseline PyTorch implementation with cuBLAS backend (TF32 precision enabled)
+- Data loading: 1.9%
+- Forward pass: 18.8%
+- Loss computation: 9.5%
+- Backward pass: 44.5%
+- Weight updates: 21.8%
 
 ### v5 (cuBLAS Optimized)
 Production-level performance
