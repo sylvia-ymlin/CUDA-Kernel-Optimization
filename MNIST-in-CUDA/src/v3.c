@@ -450,7 +450,7 @@ void initialize_neural_network(NeuralNetwork *nn) {
     initialize_random_weights(nn);
 }
 
-// Evaluate model accuracy on test set
+// Evaluate model accuracy on test set (inline matmul to avoid forward declaration)
 void evaluate(NeuralNetwork *nn, float *X_test, int *y_test) {
     int correct = 0;
     int num_batches = TEST_SIZE / BATCH_SIZE;
@@ -462,17 +462,26 @@ void evaluate(NeuralNetwork *nn, float *X_test, int *y_test) {
         float *batch_x = X_test + batch * BATCH_SIZE * INPUT_SIZE;
         int *batch_y = y_test + batch * BATCH_SIZE;
         
-        // Forward pass: hidden = relu(X @ W1 + b1)
-        matmul(batch_x, nn->weights1, hidden, BATCH_SIZE, INPUT_SIZE, HIDDEN_SIZE);
-        for (int i = 0; i < BATCH_SIZE * HIDDEN_SIZE; i++) {
-            hidden[i] += nn->bias1[i % HIDDEN_SIZE];
-            hidden[i] = fmaxf(0.0f, hidden[i]);  // ReLU
+        // Forward: hidden = relu(X @ W1 + b1)
+        for (int i = 0; i < BATCH_SIZE; i++) {
+            for (int j = 0; j < HIDDEN_SIZE; j++) {
+                float sum = nn->bias1[j];
+                for (int k = 0; k < INPUT_SIZE; k++) {
+                    sum += batch_x[i * INPUT_SIZE + k] * nn->weights1[k * HIDDEN_SIZE + j];
+                }
+                hidden[i * HIDDEN_SIZE + j] = fmaxf(0.0f, sum);
+            }
         }
         
-        // Forward pass: output = hidden @ W2 + b2
-        matmul(hidden, nn->weights2, output, BATCH_SIZE, HIDDEN_SIZE, OUTPUT_SIZE);
-        for (int i = 0; i < BATCH_SIZE * OUTPUT_SIZE; i++) {
-            output[i] += nn->bias2[i % OUTPUT_SIZE];
+        // Forward: output = hidden @ W2 + b2
+        for (int i = 0; i < BATCH_SIZE; i++) {
+            for (int j = 0; j < OUTPUT_SIZE; j++) {
+                float sum = nn->bias2[j];
+                for (int k = 0; k < HIDDEN_SIZE; k++) {
+                    sum += hidden[i * HIDDEN_SIZE + k] * nn->weights2[k * OUTPUT_SIZE + j];
+                }
+                output[i * OUTPUT_SIZE + j] = sum;
+            }
         }
         
         // Count correct predictions
