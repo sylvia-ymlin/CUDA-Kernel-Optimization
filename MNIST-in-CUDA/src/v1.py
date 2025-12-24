@@ -78,6 +78,8 @@ def train_timed(model, criterion, optimizer, epoch, timing_stats, epoch_losses):
     epoch_loss = 0.0
     
     for i in range(iters_per_epoch):
+        iter_start = time.time()  # Track total iteration time
+        
         # Data loading timing (no GPU transfer needed - already on GPU)
         data_start = time.time()
         data = train_data[i * batch_size : (i + 1) * batch_size]
@@ -85,7 +87,11 @@ def train_timed(model, criterion, optimizer, epoch, timing_stats, epoch_losses):
         data_end = time.time()
         timing_stats['data_loading'] += data_end - data_start
         
+        # Zero grad timing (was missing!)
+        zero_start = time.time()
         optimizer.zero_grad()
+        zero_end = time.time()
+        timing_stats['other'] += zero_end - zero_start
         
         # Forward pass timing
         forward_start = time.time()
@@ -109,9 +115,15 @@ def train_timed(model, criterion, optimizer, epoch, timing_stats, epoch_losses):
         # Weight updates timing
         update_start = time.time()
         optimizer.step()
-        optimizer.zero_grad()
         update_end = time.time()
         timing_stats['weight_updates'] += update_end - update_start
+        
+        iter_end = time.time()
+        # Any remaining time not accounted for
+        measured = (data_end - data_start) + (zero_end - zero_start) + \
+                   (forward_end - forward_start) + (loss_end - loss_start) + \
+                   (backward_end - backward_start) + (update_end - update_start)
+        timing_stats['other'] += (iter_end - iter_start) - measured
     
     # Store average loss for this epoch
     epoch_losses.append(epoch_loss / iters_per_epoch)
@@ -152,6 +164,7 @@ if __name__ == "__main__":
         'loss_computation': 0.0,
         'backward': 0.0,
         'weight_updates': 0.0,
+        'other': 0.0,  # zero_grad, Python overhead, etc.
         'total_time': 0.0
     }
     epoch_losses = []
@@ -167,6 +180,13 @@ if __name__ == "__main__":
     total_end = time.time()
     timing_stats['total_time'] = total_end - total_start
     
+    # Calculate epoch loop overhead (print statements, etc.)
+    measured_total = timing_stats['data_loading'] + timing_stats['forward'] + \
+                     timing_stats['loss_computation'] + timing_stats['backward'] + \
+                     timing_stats['weight_updates'] + timing_stats['other']
+    epoch_overhead = timing_stats['total_time'] - measured_total
+    timing_stats['other'] += epoch_overhead  # Add epoch overhead to other
+    
     # Print detailed timing breakdown
     print("\n=== PYTORCH CUDA IMPLEMENTATION TIMING BREAKDOWN ===")
     print(f"Total training time: {timing_stats['total_time']:.1f} seconds\n")
@@ -177,5 +197,6 @@ if __name__ == "__main__":
     print(f"  Loss computation: {timing_stats['loss_computation']:6.3f}s ({100.0 * timing_stats['loss_computation'] / timing_stats['total_time']:5.1f}%)")
     print(f"  Backward pass:    {timing_stats['backward']:6.3f}s ({100.0 * timing_stats['backward'] / timing_stats['total_time']:5.1f}%)")
     print(f"  Weight updates:   {timing_stats['weight_updates']:6.3f}s ({100.0 * timing_stats['weight_updates'] / timing_stats['total_time']:5.1f}%)")
+    print(f"  Other:            {timing_stats['other']:6.3f}s ({100.0 * timing_stats['other'] / timing_stats['total_time']:5.1f}%)")
 
     print("Finished Training")

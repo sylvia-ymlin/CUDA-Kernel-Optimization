@@ -179,7 +179,7 @@ nvcc -O2 -lcublas -o v6 v6.cu && ./v6
 | v3.c    | C CPU         | 379.7s| 1x (baseline)| 0.139      |
 | v4.cu   | Naive CUDA    | 1.7s  | ~223x        | 0.144      |
 | v5.cu   | cuBLAS        | 0.72s | ~527x        | 0.142      |
-| v6.cu   | TF32 Optimized| 0.3s  | 300x         | 0.142      |
+| v6.cu   | Streams+Fusion| 0.47s | ~808x        | 0.143      |
 | v7.cu   | Fused GEMM    | 0.6s  | 150x         | 0.143      |
 | v8.cu   | Pure FP16     | 0.3s  | 300x         | 0.145      |
 
@@ -206,7 +206,20 @@ nvcc -O2 -lcublas -o v6 v6.cu && ./v6
 <tr>
   <td>v5 cuBLAS</td><td>0.72s</td><td>0.13s (17.7%)</td><td colspan="4" align="center">0.59s GPU compute (82.2%)</td>
 </tr>
+<tr>
+  <td>v6 Streams</td><td>0.47s</td><td>0.01s (2.8%)</td><td colspan="2" align="center">0.21s issue (45%)</td><td colspan="2" align="center">0.25s sync (52%)</td>
+</tr>
 </table>
+
+**v6 Timing Note:** Due to async operations, timing shows:
+- **H2D issue** + **GPU issue**: Time to *queue* async operations (CPU returns immediately)
+- **Sync wait**: Time *waiting* for GPU to finish (actual execution)
+
+**"Other" Category:** Unmeasured overhead includes:
+- Python interpreter overhead (v1)
+- Epoch loop iteration, print statements
+- CUDA context initialization (v4)
+- Memory allocation outside timed sections
 
 ![Timing Analysis](assets/timing_analysis.png)
 
@@ -222,9 +235,11 @@ nvcc -O2 -lcublas -o v6 v6.cu && ./v6
 ## Advanced Optimizations
 
 ### Implemented in v6
-- **CUDA Streams:** Overlapping computation with data transfer
-- **TF32 Tensor Cores:** Hardware acceleration on Ampere+ GPUs
-- **Kernel Fusion:** Combined bias + ReLU operations
+- **CUDA Streams:** 2 streams for overlapping H2D transfer with compute
+- **Pinned Memory:** `cudaMallocHost` for faster DMA transfers
+- **Double Buffering:** Each stream has own device buffers
+- **Kernel Fusion:** Combined bias + ReLU into single kernel
+- ~~**TF32 Tensor Cores**~~ — skipped (T4 is Turing SM 7.5, requires Ampere SM 8.0+)
 
 ### Implemented in v7
 - **Custom Fused GEMM:** Tiled shared memory GEMM with fused bias + ReLU epilogue

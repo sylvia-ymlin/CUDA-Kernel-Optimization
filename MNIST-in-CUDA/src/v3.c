@@ -420,6 +420,9 @@ void train_timed(NeuralNetwork *nn, float *X_train, int *y_train) {
     double backward_pass = stats.bwd_output_grad + stats.bwd_matmul2 + stats.bwd_bias2 + stats.bwd_relu + stats.bwd_matmul1 + stats.bwd_bias1;
     printf("  Backward pass:    %6.3fs (%5.1f%%)\n", backward_pass, 100.0 * backward_pass / stats.total_time);
     printf("  Weight updates:   %6.3fs (%5.1f%%)\n", stats.weight_updates, 100.0 * stats.weight_updates / stats.total_time);
+    double measured = stats.data_loading + forward_pass + stats.cross_entropy + backward_pass + stats.weight_updates;
+    double other = stats.total_time - measured;
+    printf("  Other:            %6.3fs (%5.1f%%)\n", other, 100.0 * other / stats.total_time);
     
     free(hidden);
     free(output);

@@ -152,6 +152,9 @@ def train_timed(model, X_train, y_train, X_test, y_test, batch_size, epochs, lea
     print(f"  Loss computation: {timing_stats['loss_computation']:6.3f}s ({100.0 * timing_stats['loss_computation'] / timing_stats['total_time']:5.1f}%)")
     print(f"  Backward pass:    {timing_stats['backward']:6.3f}s ({100.0 * timing_stats['backward'] / timing_stats['total_time']:5.1f}%)")
     print(f"  Weight updates:   {timing_stats['weight_updates']:6.3f}s ({100.0 * timing_stats['weight_updates'] / timing_stats['total_time']:5.1f}%)")
+    measured = timing_stats['data_loading'] + timing_stats['forward'] + timing_stats['loss_computation'] + timing_stats['backward'] + timing_stats['weight_updates']
+    other = timing_stats['total_time'] - measured
+    print(f"  Other:            {other:6.3f}s ({100.0 * other / timing_stats['total_time']:5.1f}%)")
     
     print("Training completed!")
 
