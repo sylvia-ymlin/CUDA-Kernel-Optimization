@@ -18,7 +18,7 @@ MORANDI = {
 }
 
 colors = [MORANDI['sage'], MORANDI['dusty_blue'], MORANDI['blush'], 
-          MORANDI['mauve'], MORANDI['terracotta']]
+          MORANDI['mauve'], MORANDI['terracotta'], '#A89B8C']  # 6 colors for 6 categories
 
 # Set global style
 plt.rcParams.update({
@@ -35,16 +35,18 @@ plt.rcParams.update({
     'axes.spines.right': False,
 })
 
-# Data
-versions = ['v1 PyTorch', 'v2 NumPy', 'v3 C', 'v4 CUDA']
-totals = [3.4, 21.0, 379.7, 1.7]
+# Data (v5 has different timing: H2D + GPU compute only)
+versions = ['v1 PyTorch', 'v2 NumPy', 'v3 C', 'v4 CUDA', 'v5 cuBLAS']
+totals = [3.4, 21.0, 379.7, 1.7, 0.86]
 
+# For v5: Data Loading = H2D (0.13s), GPU Compute (0.73s) combines Forward+Loss+Backward+Updates
 data = {
-    'Data Loading': [0.06, 0.02, 0.00, 0.13],
-    'Forward': [0.64, 5.42, 269.2, 0.86],
-    'Loss': [0.32, 0.55, 0.00, 0.00],
-    'Backward': [1.51, 9.87, 105.2, 0.44],
-    'Updates': [0.74, 5.15, 3.04, 0.17],
+    'Data Loading': [0.06, 0.02, 0.00, 0.13, 0.13],
+    'Forward': [0.64, 5.42, 269.2, 0.86, 0.00],
+    'Loss': [0.32, 0.55, 0.00, 0.00, 0.00],
+    'Backward': [1.51, 9.87, 105.2, 0.44, 0.00],
+    'Updates': [0.74, 5.15, 3.04, 0.17, 0.00],
+    'GPU Compute': [0.00, 0.00, 0.00, 0.00, 0.73],  # v5 only (cuBLAS combined)
 }
 
 # ============ Figure 1: Percentage Breakdown (Horizontal) ============
@@ -69,17 +71,17 @@ ax.set_xlim(0, 115)
 ax.set_xlabel('Time Distribution (%)', fontsize=12)
 ax.set_yticks(y)
 ax.set_yticklabels(versions, fontsize=11)
-ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.12), ncol=5, frameon=False, fontsize=9)
+ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.12), ncol=6, frameon=False, fontsize=9)
 ax.set_title('MNIST MLP Training · Time Breakdown', fontsize=14, fontweight='bold', pad=15)
 ax.grid(axis='x', alpha=0.3, color=MORANDI['grid'])
 
 plt.tight_layout()
-plt.savefig('../assets/timing_analysis.png', dpi=150, bbox_inches='tight', facecolor=MORANDI['bg'])
+plt.savefig('assets/timing_analysis.png', dpi=150, bbox_inches='tight', facecolor=MORANDI['bg'])
 print("Saved: timing_analysis.png")
 
 # ============ Figure 2: Version Progression Flowchart ============
-fig2, ax2 = plt.subplots(figsize=(12, 6))
-ax2.set_xlim(0, 10)
+fig2, ax2 = plt.subplots(figsize=(14, 6))
+ax2.set_xlim(0, 12)
 ax2.set_ylim(0, 6)
 ax2.axis('off')
 
@@ -89,12 +91,13 @@ flow_data = [
     {'name': 'v2.py', 'tech': 'NumPy', 'time': '21.0s', 'speedup': '18×', 'color': MORANDI['sage']},
     {'name': 'v3.c', 'tech': 'C CPU', 'time': '379.7s', 'speedup': '1× (base)', 'color': MORANDI['terracotta']},
     {'name': 'v4.cu', 'tech': 'CUDA', 'time': '1.7s', 'speedup': '223×', 'color': MORANDI['blush']},
+    {'name': 'v5.cu', 'tech': 'cuBLAS', 'time': '0.86s', 'speedup': '444×', 'color': MORANDI['mauve']},
 ]
 
 # Box positions
-x_positions = [1.2, 3.6, 6.0, 8.4]
+x_positions = [1.2, 3.4, 5.6, 7.8, 10.0]
 y_center = 3.0
-box_w, box_h = 1.8, 2.2
+box_w, box_h = 1.6, 2.2
 
 # Draw boxes and content
 for i, (x, d) in enumerate(zip(x_positions, flow_data)):
@@ -130,6 +133,7 @@ transitions = [
     ('Remove\nautograd', 1),
     ('Remove\nBLAS', 2),
     ('GPU\nparallel', 3),
+    ('Use\ncuBLAS', 4),
 ]
 for label, idx in transitions:
     x_mid = (x_positions[idx-1] + x_positions[idx]) / 2
@@ -137,14 +141,14 @@ for label, idx in transitions:
              fontsize=9, color=MORANDI['text'], alpha=0.8)
 
 # Title
-ax2.text(5, 5.4, 'Version Progression · MNIST MLP Training', 
+ax2.text(6, 5.4, 'Version Progression · MNIST MLP Training', 
          ha='center', va='center', fontsize=14, fontweight='bold', color=MORANDI['text'])
 
 # Subtitle
-ax2.text(5, 4.9, '784 → 1024 → 10  |  10 epochs  |  batch 32', 
+ax2.text(6, 4.9, '784 → 1024 → 10  |  10 epochs  |  batch 32', 
          ha='center', va='center', fontsize=10, color=MORANDI['text'], alpha=0.7)
 
 plt.tight_layout()
-plt.savefig('./assets/speedup_comparison.png', dpi=150, bbox_inches='tight', facecolor=MORANDI['bg'])
+plt.savefig('assets/speedup_comparison.png', dpi=150, bbox_inches='tight', facecolor=MORANDI['bg'])
 print("Saved: speedup_comparison.png")
 

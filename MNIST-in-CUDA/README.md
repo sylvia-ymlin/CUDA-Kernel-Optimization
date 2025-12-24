@@ -127,7 +127,7 @@ nvcc -O2 -lcublas -o v5 v5.cu && ./v5
   - Minimal synchronization (only at batch end, not after each kernel)
   - Modular code: `forward_pass_only()`, `backward_pass_only()`, `update_weights_only()`
 - **Purpose:** Production-quality implementation demonstrating cuBLAS usage
-- **Note:** ~4x faster than v4 due to optimized GEMM and reduced memory operations
+- **Note:** ~2x faster than v4 due to optimized GEMM; timing simplified to H2D + GPU compute
 
 ### v6.cu - Fully Optimized
 - **Framework:** CUDA with cuBLAS + advanced optimizations
@@ -173,7 +173,7 @@ nvcc -O2 -lcublas -o v5 v5.cu && ./v5
 | v2.py   | NumPy CPU     | 21.0s | ~18x         | 0.142      |
 | v3.c    | C CPU         | 379.7s| 1x (baseline)| 0.139      |
 | v4.cu   | Naive CUDA    | 1.7s  | ~223x        | 0.144      |
-| v5.cu   | cuBLAS        | 0.4s  | 225x         | 0.142      |
+| v5.cu   | cuBLAS        | 0.86s | ~444x        | 0.142      |
 | v6.cu   | TF32 Optimized| 0.3s  | 300x         | 0.142      |
 | v7.cu   | Fused GEMM    | 0.6s  | 150x         | 0.143      |
 | v8.cu   | Pure FP16     | 0.3s  | 300x         | 0.145      |
@@ -188,6 +188,7 @@ nvcc -O2 -lcublas -o v5 v5.cu && ./v5
 | v2 NumPy | 21.0s | 0.02s (0.1%) | 5.42s (25.8%) | 0.55s (2.6%) | 9.87s (47.0%) | 5.15s (24.5%) |
 | v3 C | 379.7s | 0.00s (0.0%) | 269.2s (70.9%) | 0.00s (0.0%) | 105.2s (27.7%) | 3.04s (0.8%) |
 | v4 CUDA | 1.7s | 0.13s (7.5%) | 0.86s (50.6%) | 0.00s (0.1%) | 0.44s (25.7%) | 0.17s (10.0%) |
+| v5 cuBLAS | 0.86s | 0.13s (14.8%) | — | — | — | 0.73s GPU (85.1%) |
 
 ![Timing Analysis](assets/timing_analysis.png)
 
