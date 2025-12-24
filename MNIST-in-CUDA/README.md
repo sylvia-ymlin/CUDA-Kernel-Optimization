@@ -66,10 +66,16 @@ nvidia-smi --query-gpu=name,compute_cap,memory.total --format=csv
 ### v3.c - C/CPU Implementation
 - **Framework:** Pure C with timing breakdown. "How to implement without Python" (low-level)
 - **Features:**
-  - Manual memory management
-  - Detailed timing instrumentation per operation
-  - CPU-optimized matrix operations
+  - Manual memory management (`malloc`/`free`)
+  - Naive triple-nested loop matrix multiplication (no BLAS)
+  - Three matmul variants: `A @ B`, `A @ B.T`, `A.T @ B`
+  - He initialization for weights
+  - MNIST normalization (mean=0.1307, std=0.3081)
+  - Softmax with numerical stability (`x - max(x)`)
+  - Binary file I/O for data loading (`fread`)
+  - Granular timing breakdown per operation (`clock_gettime`)
 - **Purpose:** Shows CPU performance baseline and prepares for GPU porting
+- **Note:** Intentionally slow (~90s) — no BLAS/SIMD optimization; same loop structure will parallelize on GPU
 
 ### v4.cu - Naive CUDA Kernels
 - **Framework:** CUDA C with custom kernels. "How to parallelize on GPU" (optimization)
