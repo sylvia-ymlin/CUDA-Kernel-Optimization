@@ -13,12 +13,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Elementwise test binary
 add_executable(test_elementwise
     tests/test_elementwise.cu
-    src/elementwise/elementwise_add.cu
-    src/elementwise/activations.cu
+    elementwise/elementwise_add.cu
+    elementwise/activations.cu
 )
 
 target_include_directories(test_elementwise PRIVATE
-    src/elementwise
+    elementwise
 )
 
 # Enable separable compilation for CUDA translation units
@@ -26,12 +26,12 @@ set_target_properties(test_elementwise PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 # Reduction test binary
 add_executable(test_reduction
     tests/test_reduction.cu
-    src/reduce/reduce_sum.cu
-    src/reduce/reduce_max.cu
+    reduce/reduce_sum.cu
+    reduce/reduce_max.cu
 )
 
 target_include_directories(test_reduction PRIVATE
-    src/reduce
+    reduce
 )
 
 # Keep files separate with separable compilation

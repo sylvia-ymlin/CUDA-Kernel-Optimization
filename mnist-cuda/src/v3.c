@@ -1,3 +1,18 @@
+/**
+ * v3.c - Pure C/CPU Implementation
+ *
+ * Purpose: Establish CPU baseline for GPU comparison.
+ *
+ * Features:
+ * - Naive O(n³) matrix multiplication (no BLAS/SIMD)
+ * - Manual memory management (malloc/free)
+ * - Three matmul variants: A@B, A@B.T, A.T@B
+ * - Binary file I/O for data loading
+ * - Per-operation timing with clock_gettime
+ *
+ * Result: ~385s training time. Demonstrates the computational bottleneck
+ *         that GPU parallelization addresses.
+ */
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>

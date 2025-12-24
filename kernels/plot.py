@@ -16,9 +16,9 @@ import os
 # Set style for all figures
 plt.style.use('seaborn-v0_8-whitegrid')
 plt.rcParams['font.family'] = 'DejaVu Sans'
-plt.rcParams['font.size'] = 11
+plt.rcParams['font.size'] = 16
 plt.rcParams['axes.titlesize'] = 14
-plt.rcParams['axes.labelsize'] = 12
+plt.rcParams['axes.labelsize'] = 16
 plt.rcParams['figure.facecolor'] = 'white'
 plt.rcParams['axes.facecolor'] = 'white'
 plt.rcParams['savefig.facecolor'] = 'white'
@@ -31,7 +31,7 @@ OUTPUT_DIR = os.path.dirname(os.path.abspath(__file__)) + '/assets'
 # ============================================================================
 def generate_memory_hierarchy():
     """Generate GPU memory hierarchy diagram."""
-    fig, ax = plt.subplots(figsize=(10, 8))
+    fig, ax = plt.subplots(figsize=(8, 6))
     ax.set_xlim(0, 10)
     ax.set_ylim(0, 10)
     ax.axis('off')
@@ -47,10 +47,10 @@ def generate_memory_hierarchy():
     
     # Layer definitions: (y_center, height, width, label, sublabel, bandwidth, color)
     layers = [
-        (8.5, 1.0, 3.0, 'Registers', '255 KB/SM', '~8 TB/s', colors['registers']),
+        (8.5, 1.2, 4.0, 'Registers', '255 KB/SM', '~8 TB/s', colors['registers']),
         (6.5, 1.2, 5.0, 'Shared Memory / L1', '48 KB/block', '~12 TB/s', colors['shared']),
         (4.3, 1.2, 7.0, 'L2 Cache', '4 MB', '~3 TB/s', colors['l2']),
-        (2.0, 1.5, 9.0, 'Global Memory (HBM/GDDR)', '15 GB', '320 GB/s', colors['global']),
+        (1.8, 1.8, 9.0, 'Global Memory (HBM/GDDR)', '15 GB', '320 GB/s', colors['global']),
     ]
     
     for y, h, w, label, size, bw, color in layers:
@@ -62,10 +62,10 @@ def generate_memory_hierarchy():
         ax.add_patch(rect)
         
         # Add label
-        ax.text(5, y + 0.1, label, ha='center', va='center', 
-                fontsize=13, fontweight='bold', color='white')
-        ax.text(5, y - 0.25, f'{size}  |  {bw}', ha='center', va='center',
-                fontsize=10, color='white')
+        ax.text(5, y + 0.2, label, ha='center', va='center', 
+                fontsize=14, fontweight='bold', color='white')
+        ax.text(5, y - 0.35, f'{size}  |  {bw}', ha='center', va='center',
+                fontsize=11, color='white')
     
     # Add arrows showing data flow
     arrow_style = dict(arrowstyle='->', color=colors['arrow'], lw=2,
@@ -79,21 +79,21 @@ def generate_memory_hierarchy():
     
     # Add latency annotations on the right
     latencies = [
-        (8.5, '1 cycle'),
+        (8.5, '~1 cycle'),
         (6.5, '~20 cycles'),
         (4.3, '~200 cycles'),
-        (2.0, '~400-600 cycles'),
+        (1.8, '~400 cycles'),
     ]
     
     for y, lat in latencies:
-        ax.text(9.5, y, lat, ha='right', va='center', fontsize=10,
+        ax.text(10.5, y, lat, ha='left', va='center', fontsize=11,
                 color='#555555', style='italic')
     
     # Title and annotations
     ax.text(5, 9.5, 'GPU Memory Hierarchy (Tesla T4)', ha='center', va='center',
             fontsize=16, fontweight='bold')
-    ax.text(0.5, 0.5, 'Capacity increases ↓  |  Bandwidth decreases ↓  |  Latency increases ↓',
-            ha='left', va='center', fontsize=10, color='#666666')
+    ax.text(0.3, 0.5, 'Capacity ↑  |  Bandwidth ↓  |  Latency ↑',
+            ha='center', va='center', fontsize=11, color='#666666')
     
     plt.tight_layout()
     plt.savefig(os.path.join(OUTPUT_DIR, 'memory_hierarchy.png'), bbox_inches='tight')
@@ -107,6 +107,12 @@ def generate_memory_hierarchy():
 def generate_roofline():
     """Generate roofline model plot with kernel placements."""
     fig, ax = plt.subplots(figsize=(12, 7))
+    plt.rcParams.update({'font.size': 18,
+                        'axes.titlesize': 24,
+                        'axes.labelsize': 20,
+                        'xtick.labelsize': 16,
+                        'ytick.labelsize': 16,
+                        'legend.fontsize': 16})
     
     # Tesla T4 specs
     peak_gflops = 8141
@@ -121,23 +127,22 @@ def generate_roofline():
     roofline = np.minimum(peak_gflops, memory_bound)
     
     # Plot roofline
-    ax.loglog(ai, roofline, 'b-', linewidth=3, label='Roofline (Tesla T4)')
-    
+    roofline_line, = ax.loglog(ai, roofline, 'b-', linewidth=3, label='Roofline (Tesla T4)')
     # Fill regions
-    ax.fill_between(ai, roofline, 0.1, where=(ai < ridge_point),
+    mem_fill = ax.fill_between(ai, roofline, 0.1, where=(ai < ridge_point),
                     alpha=0.15, color='blue', label='Memory-bound region')
-    ax.fill_between(ai, roofline, 0.1, where=(ai >= ridge_point),
+    comp_fill = ax.fill_between(ai, roofline, 0.1, where=(ai >= ridge_point),
                     alpha=0.15, color='red', label='Compute-bound region')
     
     # Ridge point
-    ax.axvline(x=ridge_point, color='gray', linestyle='--', linewidth=1.5, alpha=0.7)
+    ridge_vline = ax.axvline(x=ridge_point, color='gray', linestyle='--', linewidth=1.5, alpha=0.7)
     ax.text(ridge_point * 1.1, 50, f'Ridge Point\n({ridge_point:.1f} FLOP/byte)',
-            fontsize=9, color='gray', va='bottom')
+            fontsize=16, color='gray', va='bottom')
     
     # Peak lines
-    ax.axhline(y=peak_gflops, color='red', linestyle=':', linewidth=1.5, alpha=0.7)
-    ax.text(0.015, peak_gflops * 1.08, f'Peak Compute: {peak_gflops} GFLOPS',
-            fontsize=9, color='red', ha='left', va='bottom')
+    peak_hline = ax.axhline(y=peak_gflops, color='red', linestyle=':', linewidth=1.5, alpha=0.7)
+    ax.text(0.03, peak_gflops * 1.08, f'Peak Compute: {peak_gflops} GFLOPS',
+            fontsize=16, color='red', ha='left', va='bottom')
     
     # Kernel data points with custom label positions (x_offset, y_offset in points)
     kernels = [
@@ -149,30 +154,37 @@ def generate_roofline():
         ('cuBLAS (reference)', 170, 6523, '#9b59b6', '*', 15, 10, 'left'),
     ]
     
+    # kernel legend handles
+    kernel_handles = []
     for name, ai_val, gflops, color, marker, x_off, y_off, ha in kernels:
-        ax.scatter([ai_val], [gflops], c=color, s=150, marker=marker, 
-                   edgecolors='black', linewidths=1.5, zorder=5)
-        ax.annotate(name, (ai_val, gflops), xytext=(x_off, y_off),
-                   textcoords='offset points', fontsize=9,
-                   fontweight='bold', color=color, ha=ha,
-                   bbox=dict(boxstyle='round,pad=0.2', facecolor='white', 
-                            edgecolor='none', alpha=0.7))
+        sc = ax.scatter([ai_val], [gflops], c=color, s=200, marker=marker, 
+                        edgecolors='black', linewidths=1.5, zorder=5, label=name)
+        kernel_handles.append(sc)
     
     # Realistic ceilings (dashed lines)
     practical_bw = 280  # After ECC, controller overhead
     practical_memory = practical_bw * ai[ai < ridge_point]
-    ax.loglog(ai[ai < ridge_point], practical_memory, 'b--', 
+    practical_line, = ax.loglog(ai[ai < ridge_point], practical_memory, 'b--', 
               linewidth=1.5, alpha=0.5, label=f'Practical BW ({practical_bw} GB/s)')
     
     # Labels and formatting
-    ax.set_xlabel('Arithmetic Intensity (FLOP/byte)', fontsize=12)
-    ax.set_ylabel('Performance (GFLOPS)', fontsize=12)
-    ax.set_title('Roofline Model: Tesla T4 (FP32)', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Arithmetic Intensity (FLOP/byte)')
+    ax.set_ylabel('Performance (GFLOPS)')
+    ax.set_title('Roofline Model: Tesla T4 (FP32)', fontweight='bold')
     
-    ax.set_xlim(0.01, 1000)
-    ax.set_ylim(1, 12000)
+    ax.set_xlim(0, 1000)
+    ax.set_ylim(1, 14000)
     ax.grid(True, which='both', alpha=0.3)
-    ax.legend(loc='lower right', fontsize=9)
+    # 只显示指定的 x 轴刻度
+    ax.set_xticks([1e-1, 1e1, 1e2, 1e3])
+    ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
+    # 两组 legend：kernel 点、区域/线
+    kernel_labels = [k[0] for k in kernels]
+    kernel_legend = ax.legend(kernel_handles, kernel_labels, loc='upper left', bbox_to_anchor=(0.01, 0.9), fontsize=15, frameon=True)
+    region_handles = [roofline_line, mem_fill, comp_fill, practical_line]
+    region_labels = ['Roofline (Tesla T4)', 'Memory-bound region', 'Compute-bound region', f'Practical BW ({practical_bw} GB/s)']
+    region_legend = ax.legend(region_handles, region_labels, loc='lower right', fontsize=15, frameon=True)
+    ax.add_artist(kernel_legend)
     
     plt.tight_layout()
     plt.savefig(os.path.join(OUTPUT_DIR, 'roofline_model.png'), bbox_inches='tight')
@@ -387,7 +399,7 @@ def generate_occupancy_ilp():
     fig, ax = plt.subplots(figsize=(10, 6))
     
     # Data points (conceptual)
-    versions = ['v2\n(High Occ)', 'v3', 'v4', 'v5', 'v6\n(High ILP)', 'v7']
+    versions = ['v2\n(High Occ)', 'v3', 'v4', 'v5', 'v6', 'v7\n(High ILP)']
     occupancy = [100, 75, 62.5, 50, 25, 25]  # Relative %
     ilp = [1, 2, 4, 4, 8, 8]  # Work per thread
     gflops = [643, 1109, 1408, 1477, 4052, 4209]
@@ -413,7 +425,7 @@ def generate_occupancy_ilp():
     ax2.set_ylabel('GFLOPS', fontsize=12, color='#e74c3c')
     ax.set_xticks(x)
     ax.set_xticklabels(versions)
-    ax.set_ylim(0, 120)
+    ax.set_ylim(0, 140)
     ax2.set_ylim(0, 5000)
     
     ax.tick_params(axis='y', labelcolor='#3498db')
@@ -424,20 +436,45 @@ def generate_occupancy_ilp():
     lines2, labels2 = ax2.get_legend_handles_labels()
     ax.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
     
-    ax.set_title('Occupancy vs ILP Tradeoff in SGEMM\n' +
-                 'Lower occupancy + higher ILP = Better performance',
+    ax.set_title('Occupancy vs ILP Tradeoff in SGEMM',
                  fontsize=13, fontweight='bold')
     
-    # Add annotation
-    ax.annotate('', xy=(4, 85), xytext=(1, 105),
-                arrowprops=dict(arrowstyle='->', color='green', lw=2))
-    ax.text(2.5, 95, 'Performance improves →', fontsize=10, color='green',
-            ha='center', fontweight='bold')
+    # # Add annotation
+    # ax.annotate('', xy=(4, 85), xytext=(1, 105),
+    #             arrowprops=dict(arrowstyle='->', color='green', lw=2))
+    # ax.text(2.5, 95, 'Performance improves →', fontsize=10, color='green',
+    #         ha='center', fontweight='bold')
     
     plt.tight_layout()
     plt.savefig(os.path.join(OUTPUT_DIR, 'occupancy_ilp.png'), bbox_inches='tight')
     plt.close()
     print("✓ Generated: occupancy_ilp.png")
+
+
+# ============================================================================
+# FIGURE 6: SGEMM Scalability Plot
+# ============================================================================
+def generate_sgemm_scalability():
+    """Generate SGEMM scalability plot (GFLOPS vs matrix size)."""
+    sizes = [512, 1024, 2048, 4096]
+    sgemm_gflops = [2759, 4249, 4458, 4719]
+    cublas_gflops = [5448, 6587, 5954, 5729]
+
+    plt.figure(figsize=(7, 4))
+    plt.plot(sizes, sgemm_gflops, marker='o', label='SGEMM v7', linewidth=2)
+    plt.plot(sizes, cublas_gflops, marker='s', linestyle='--', label='cuBLAS', linewidth=2)
+    plt.xticks(sizes, [f"{s}³" for s in sizes], fontsize=12)
+    plt.yticks(fontsize=12)
+    plt.xlabel("Matrix Size", fontsize=13)
+    plt.ylabel("GFLOPS", fontsize=13)
+    plt.title("SGEMM Scalability vs cuBLAS", fontsize=14)
+    plt.grid(True, linestyle=':')
+    plt.legend(fontsize=12)
+    plt.tight_layout()
+    plt.savefig(os.path.join(OUTPUT_DIR, 'sgemm_scalability.png'), dpi=200)
+    plt.savefig(os.path.join(OUTPUT_DIR, 'sgemm_scalability.svg'))
+    plt.close()
+    print("✓ Generated: sgemm_scalability.png")
 
 
 # ============================================================================
@@ -451,6 +488,7 @@ if __name__ == '__main__':
     generate_sgemm_tiling()
     generate_transpose_bank_conflicts()
     generate_occupancy_ilp()
+    generate_sgemm_scalability()
     
     print(f"\nAll figures saved to: {OUTPUT_DIR}/")
     print("\nTo use in README.md:")
@@ -459,4 +497,4 @@ if __name__ == '__main__':
     print("  ![SGEMM Tiling](figures/sgemm_tiling.png)")
     print("  ![Bank Conflicts](figures/bank_conflicts.png)")
     print("  ![Occupancy vs ILP](figures/occupancy_ilp.png)")
-
+    print("  ![SGEMM Scalability](figures/sgemm_scalability.png)")

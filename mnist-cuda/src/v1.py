@@ -1,3 +1,16 @@
+"""
+v1.py - PyTorch Baseline
+
+Purpose: Correctness reference for all subsequent implementations.
+
+Features:
+- High-level PyTorch API (nn.Linear, nn.ReLU, nn.CrossEntropyLoss)
+- CUDA tensors with data pre-loaded to GPU
+- Custom He initialization matching NumPy/C implementations
+- Detailed per-operation timing instrumentation
+
+Result: Establishes baseline accuracy (~93%) and serves as ground truth.
+"""
 import time
 import numpy as np
 import torch

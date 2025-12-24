@@ -25,9 +25,9 @@
 #include <cublas_v2.h>
 
 typedef struct {
-    double memory_transfers;
-    double gpu_compute;
-    double sync_wait;
+    double h2d_submit;       // Time to call cudaMemcpyAsync (CPU returns immediately)
+    double kernel_launch;    // Time to call kernel<<<>>> and cuBLAS (CPU returns immediately)
+    double stream_sync;      // Time in cudaStreamSynchronize (actual GPU execution)
     double total_time;
 } TimingStats;
 
@@ -651,7 +651,7 @@ int main() {
                 clock_gettime(CLOCK_MONOTONIC, &step_start);
                 CUDA_CHECK(cudaStreamSynchronize(nn.streams[stream_idx]));
                 clock_gettime(CLOCK_MONOTONIC, &step_end);
-                stats.sync_wait += get_time_diff(step_start, step_end);
+                stats.stream_sync += get_time_diff(step_start, step_end);
                 
                 for (int i = 0; i < BATCH_SIZE; i++) {
                     total_loss += h_loss[stream_idx][i];
@@ -667,7 +667,7 @@ int main() {
                                        BATCH_SIZE * sizeof(int), 
                                        cudaMemcpyHostToDevice, nn.streams[stream_idx]));
             clock_gettime(CLOCK_MONOTONIC, &step_end);
-            stats.memory_transfers += get_time_diff(step_start, step_end);
+            stats.h2d_submit += get_time_diff(step_start, step_end);
 
             // GPU Computation
             clock_gettime(CLOCK_MONOTONIC, &step_start);
@@ -678,7 +678,7 @@ int main() {
             update_weights_stream(&nn, LEARNING_RATE, stream_idx);
             
             clock_gettime(CLOCK_MONOTONIC, &step_end);
-            stats.gpu_compute += get_time_diff(step_start, step_end);
+            stats.kernel_launch += get_time_diff(step_start, step_end);
         }
 
         // Collect remaining losses
@@ -686,7 +686,7 @@ int main() {
             clock_gettime(CLOCK_MONOTONIC, &step_start);
             CUDA_CHECK(cudaStreamSynchronize(nn.streams[s]));
             clock_gettime(CLOCK_MONOTONIC, &step_end);
-            stats.sync_wait += get_time_diff(step_start, step_end);
+            stats.stream_sync += get_time_diff(step_start, step_end);
             
             int remaining_batch = num_batches - NUM_STREAMS + s;
             if (remaining_batch >= 0 && remaining_batch < num_batches) {
@@ -706,14 +706,14 @@ int main() {
     printf("Total training time: %.3f seconds\n\n", stats.total_time);
 
     printf("Timing Breakdown:\n");
-    printf("  H2D issue:      %6.3fs (%5.1f%%)  <- FP16 = half the data\n", 
-           stats.memory_transfers, 100.0 * stats.memory_transfers / stats.total_time);
-    printf("  GPU issue:      %6.3fs (%5.1f%%)  <- Tensor Core accelerated\n", 
-           stats.gpu_compute, 100.0 * stats.gpu_compute / stats.total_time);
-    printf("  Sync wait:      %6.3fs (%5.1f%%)\n", 
-           stats.sync_wait, 100.0 * stats.sync_wait / stats.total_time);
+    printf("  H2D submit:     %6.3fs (%5.1f%%)  <- FP16 = half the data\n", 
+           stats.h2d_submit, 100.0 * stats.h2d_submit / stats.total_time);
+    printf("  Kernel launch:  %6.3fs (%5.1f%%)  <- Tensor Core accelerated\n", 
+           stats.kernel_launch, 100.0 * stats.kernel_launch / stats.total_time);
+    printf("  Stream sync:    %6.3fs (%5.1f%%)  <- actual GPU execution time\n", 
+           stats.stream_sync, 100.0 * stats.stream_sync / stats.total_time);
     
-    double accounted = stats.memory_transfers + stats.gpu_compute + stats.sync_wait;
+    double accounted = stats.h2d_submit + stats.kernel_launch + stats.stream_sync;
     printf("  Other:          %6.3fs (%5.1f%%)\n",
            stats.total_time - accounted, 100.0 * (stats.total_time - accounted) / stats.total_time);
 

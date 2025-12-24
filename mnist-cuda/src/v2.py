@@ -1,3 +1,16 @@
+"""
+v2.py - NumPy Implementation
+
+Purpose: Demonstrate the underlying math without GPU acceleration.
+
+Features:
+- Manual forward/backward pass implementation
+- Explicit gradient computation and weight updates
+- Numerically stable softmax (x - max(x))
+- He initialization for weights
+
+Result: ~22s training time on CPU, validates algorithm correctness.
+"""
 import numpy as np
 import time
 

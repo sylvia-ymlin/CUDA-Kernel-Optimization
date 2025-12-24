@@ -1,13 +1,13 @@
 /**
- * v7.cu - Custom Fused GEMM (Educational)
+ * v6.cu - Streams & Fusion Optimized
  * 
- * Key change from v6:
- * - Custom tiled shared memory GEMM with fused bias + ReLU epilogue
- * - cuBLAS only for backward pass (need reliable gradients)
- * - All v6 optimizations retained (streams, pinned memory, double buffering)
+ * Optimizations over v5:
+ * 1. CUDA Streams: Overlap H2D transfer with compute
+ * 2. Pinned Memory: cudaMallocHost for faster H2D
+ * 3. Double Buffering: Prefetch next batch while computing current
+ * 4. Fused Kernels: bias + ReLU combined into single kernel
  * 
- * Purpose: Demonstrate how kernel fusion works at the CUDA level
- * Note: Expected to be SLOWER than v6 — shows why cuBLAS/CUTLASS exist
+ * Note: TF32 Tensor Cores skipped (T4 is Turing SM 7.5, requires Ampere SM 8.0+)
  */
 
 #include <stdio.h>
@@ -18,10 +18,11 @@
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
 
+// Timing structure
 typedef struct {
-    double memory_transfers;
-    double gpu_compute;
-    double sync_wait;
+    double h2d_submit;       // Time to call cudaMemcpyAsync (CPU returns immediately)
+    double kernel_launch;    // Time to call kernel<<<>>> and cuBLAS (CPU returns immediately)
+    double stream_sync;      // Time in cudaStreamSynchronize (actual GPU execution)
     double total_time;
 } TimingStats;
 
@@ -33,13 +34,7 @@ typedef struct {
 #define BATCH_SIZE 32
 #define EPOCHS 10
 #define LEARNING_RATE 0.01
-#define NUM_STREAMS 2
-
-// ============================================================
-// [NEW in v7] Tile size for custom GEMM
-// 32x32 is a common choice: fits in shared memory, good occupancy
-// ============================================================
-#define TILE_SIZE 32
+#define NUM_STREAMS 2  // Double buffering
 
 #define CUDA_CHECK(call) \
     do { \
@@ -66,9 +61,15 @@ double get_time_diff(struct timespec start, struct timespec end) {
 }
 
 typedef struct {
+    // Shared weights (same for all streams)
     float *d_weights1, *d_weights2, *d_bias1, *d_bias2;
     float *d_grad_weights1, *d_grad_weights2, *d_grad_bias1, *d_grad_bias2;
     
+    // ============================================================
+    // [NEW in v6] DOUBLE BUFFERING: Each stream has its own buffers
+    // v5: Single buffer, must wait for H2D to complete before compute
+    // v6: 2 buffers, stream[0] computes while stream[1] transfers
+    // ============================================================
     float *d_fc1_output[NUM_STREAMS];
     float *d_fc2_output[NUM_STREAMS];
     float *d_grad_hidden[NUM_STREAMS];
@@ -77,6 +78,11 @@ typedef struct {
     int *d_labels[NUM_STREAMS];
     float *d_loss[NUM_STREAMS];
 
+    // ============================================================
+    // [NEW in v6] CUDA STREAMS: Enable async operations
+    // v5: Default stream (synchronous)
+    // v6: Multiple streams for overlapped execution
+    // ============================================================
     cudaStream_t streams[NUM_STREAMS];
     cublasHandle_t cublas_handle;
 } NeuralNetworkCUDA;
@@ -119,80 +125,28 @@ void initialize_bias_host(float *bias, int size) {
 }
 
 // ============================================================
-// [NEW in v7] CUSTOM FUSED GEMM + BIAS + RELU KERNEL
-// 
-// Computes: Y[M,N] = ReLU(W[M,K] @ X[K,N] + bias[M])
-// 
-// IMPORTANT: Follows cuBLAS convention (column-major everywhere)
-// - W: weights [out_features, in_features] column-major
-// - X: input [in_features, batch] column-major
-// - Y: output [out_features, batch] column-major
-// - bias: [out_features]
-// 
-// This matches cuBLAS: Y = W @ X (not X @ W!)
+// [NEW in v6] FUSED KERNEL: bias + ReLU in single kernel
+// v5: bias_add_kernel + relu_kernel (2 kernel launches)
+// v6: bias_add_relu_kernel (1 kernel launch, saves overhead)
 // ============================================================
-__global__ void fused_gemm_bias_relu_kernel(
-    const float* __restrict__ W,      // [M, K] column-major (weights)
-    const float* __restrict__ X,      // [K, N] column-major (input)
-    const float* __restrict__ bias,   // [M] (output features)
-    float* __restrict__ Y,            // [M, N] column-major (output)
-    int M, int K, int N,
-    bool apply_relu
-) {
-    __shared__ float Ws[TILE_SIZE][TILE_SIZE];
-    __shared__ float Xs[TILE_SIZE][TILE_SIZE];
-    
-    // Output element [row, col] where row ∈ [0,M), col ∈ [0,N)
-    int row = blockIdx.y * TILE_SIZE + threadIdx.y;  // output feature index
-    int col = blockIdx.x * TILE_SIZE + threadIdx.x;  // batch index
-    
-    float sum = 0.0f;
-    
-    int num_tiles = (K + TILE_SIZE - 1) / TILE_SIZE;
-    for (int t = 0; t < num_tiles; t++) {
-        // Load W tile: W[row, t*TILE + tx]
-        // W is column-major: W[i,j] = W[i + j * M]
-        int w_col = t * TILE_SIZE + threadIdx.x;
-        if (row < M && w_col < K) {
-            Ws[threadIdx.y][threadIdx.x] = W[row + w_col * M];
-        } else {
-            Ws[threadIdx.y][threadIdx.x] = 0.0f;
-        }
-        
-        // Load X tile: X[t*TILE + ty, col]
-        // X is column-major: X[i,j] = X[i + j * K]
-        int x_row = t * TILE_SIZE + threadIdx.y;
-        if (x_row < K && col < N) {
-            Xs[threadIdx.y][threadIdx.x] = X[x_row + col * K];
-        } else {
-            Xs[threadIdx.y][threadIdx.x] = 0.0f;
-        }
-        
-        __syncthreads();
-        
-        // Y[row,col] = sum_k W[row,k] * X[k,col]
-        #pragma unroll
-        for (int k = 0; k < TILE_SIZE; k++) {
-            sum += Ws[threadIdx.y][k] * Xs[k][threadIdx.x];
-        }
-        
-        __syncthreads();
-    }
-    
-    // Epilogue: bias (indexed by output row) + optional ReLU
-    if (row < M && col < N) {
-        sum += bias[row];  // bias[out_feature], not bias[batch]!
-        if (apply_relu) {
-            sum = fmaxf(0.0f, sum);
-        }
-        // Y is column-major: Y[i,j] = Y[i + j * M]
-        Y[row + col * M] = sum;
+__global__ void bias_add_relu_kernel(float *x, float *bias, int batch, int size) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < batch * size) {
+        int bias_idx = idx % size;
+        float val = x[idx] + bias[bias_idx];
+        x[idx] = fmaxf(0.0f, val);  // Fused: bias + ReLU in one operation
     }
 }
 
-// FC2 version: same as above but apply_relu=false (just call main kernel with false)
+// Separate bias_add for output layer (no ReLU)
+__global__ void bias_add_kernel(float *x, float *bias, int batch, int size) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < batch * size) {
+        int bias_idx = idx % size;
+        x[idx] += bias[bias_idx];
+    }
+}
 
-// Backward kernels (same as v6)
 __global__ void relu_backward_kernel(float *grad, float *x, int total) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < total) {
@@ -208,9 +162,7 @@ __global__ void bias_backward_kernel(float *grad_output, float *grad_bias, int b
     }
 }
 
-// Softmax + cross-entropy + backward gradient computation
-// NOTE: logits is column-major [num_classes, batch_size] to match cuBLAS output
-//       grad_output is also column-major [num_classes, batch_size] for backward
+// GPU-side softmax + cross-entropy loss + backward gradient
 __global__ void softmax_cross_entropy_backward_kernel(
     float *logits, int *labels, float *grad_output, float *loss_per_sample,
     int batch_size, int num_classes
@@ -222,9 +174,8 @@ __global__ void softmax_cross_entropy_backward_kernel(
     float *sample_logits = shared;
     int tid = threadIdx.x;
 
-    // Load logits: column-major [num_classes, batch], element [c, b] at index c + b * num_classes
     if (tid < num_classes) {
-        sample_logits[tid] = logits[tid + b * num_classes];
+        sample_logits[tid] = logits[b * num_classes + tid];
     }
     __syncthreads();
 
@@ -260,8 +211,7 @@ __global__ void softmax_cross_entropy_backward_kernel(
             grad -= 1.0f;
         }
         grad /= (float)batch_size;
-        // Store grad: column-major [num_classes, batch], element [c, b] at index c + b * num_classes
-        grad_output[tid + b * num_classes] = grad;
+        grad_output[b * num_classes + tid] = grad;
 
         if (tid == label) {
             loss_per_sample[b] = -logf(fmaxf(prob, 1e-7f));
@@ -270,62 +220,62 @@ __global__ void softmax_cross_entropy_backward_kernel(
 }
 
 // ============================================================
-// [NEW in v7] Forward pass using CUSTOM FUSED GEMM
-// 
-// cuBLAS convention: Y = W @ X (column-major everywhere)
-// FC1: Y1[HIDDEN, batch] = W1[HIDDEN, INPUT] @ X[INPUT, batch]
-// FC2: Y2[OUTPUT, batch] = W2[OUTPUT, HIDDEN] @ Y1[HIDDEN, batch]
+// [NEW in v6] Forward pass with explicit stream
+// v5: Default stream, all ops serialized
+// v6: Explicit stream, ops can overlap with other streams
 // ============================================================
 void forward_pass_stream(NeuralNetworkCUDA *nn, int stream_idx, int batch_size) {
+    const float alpha = 1.0f, beta = 0.0f;
     cudaStream_t stream = nn->streams[stream_idx];
-    dim3 block(TILE_SIZE, TILE_SIZE);
     
-    // FC1: Y = W1 @ X + b1, then ReLU
-    // W1: [HIDDEN, INPUT] col-major (M=HIDDEN, K=INPUT)
-    // X:  [INPUT, batch] col-major (input stored row-major = col-major transposed)
-    // Y:  [HIDDEN, batch] col-major (M=HIDDEN, N=batch)
-    dim3 grid1((batch_size + TILE_SIZE - 1) / TILE_SIZE,    // N dimension (batch)
-               (HIDDEN_SIZE + TILE_SIZE - 1) / TILE_SIZE);  // M dimension (hidden)
+    // [NEW] Set cuBLAS to use this stream (not default stream)
+    CUBLAS_CHECK(cublasSetStream(nn->cublas_handle, stream));
     
-    fused_gemm_bias_relu_kernel<<<grid1, block, 0, stream>>>(
-        nn->d_weights1,                  // W: [HIDDEN, INPUT] col-major
-        nn->d_input_batch[stream_idx],   // X: [INPUT, batch] col-major
-        nn->d_bias1,                     // bias: [HIDDEN]
-        nn->d_fc1_output[stream_idx],    // Y: [HIDDEN, batch] col-major
-        HIDDEN_SIZE, INPUT_SIZE, batch_size,  // M, K, N
-        true  // apply ReLU
-    );
+    // Forward matmul 1
+    CUBLAS_CHECK(cublasSgemm(nn->cublas_handle, CUBLAS_OP_N, CUBLAS_OP_N,
+                           HIDDEN_SIZE, batch_size, INPUT_SIZE,
+                           &alpha, nn->d_weights1, HIDDEN_SIZE,
+                           nn->d_input_batch[stream_idx], INPUT_SIZE, &beta,
+                           nn->d_fc1_output[stream_idx], HIDDEN_SIZE));
 
-    // FC2: Y = W2 @ H + b2 (no ReLU)
-    // W2: [OUTPUT, HIDDEN] col-major (M=OUTPUT, K=HIDDEN)
-    // H:  [HIDDEN, batch] col-major (from FC1)
-    // Y:  [OUTPUT, batch] col-major (M=OUTPUT, N=batch)
-    dim3 grid2((batch_size + TILE_SIZE - 1) / TILE_SIZE,    // N dimension (batch)
-               (OUTPUT_SIZE + TILE_SIZE - 1) / TILE_SIZE);  // M dimension (output)
-    
-    fused_gemm_bias_relu_kernel<<<grid2, block, 0, stream>>>(
-        nn->d_weights2,                  // W: [OUTPUT, HIDDEN] col-major
-        nn->d_fc1_output[stream_idx],    // X: [HIDDEN, batch] col-major
-        nn->d_bias2,                     // bias: [OUTPUT]
-        nn->d_fc2_output[stream_idx],    // Y: [OUTPUT, batch] col-major
-        OUTPUT_SIZE, HIDDEN_SIZE, batch_size,  // M, K, N
-        false  // no ReLU for output layer
-    );
+    // ============================================================
+    // [NEW in v6] FUSED bias + ReLU (1 kernel instead of 2!)
+    // v5: bias_add_kernel<<<...>>>  then  relu_kernel<<<...>>>
+    // v6: bias_add_relu_kernel<<<...>>> (saves kernel launch overhead)
+    // ============================================================
+    int total_hidden = batch_size * HIDDEN_SIZE;
+    int grid_hidden = (total_hidden + 255) / 256;
+    bias_add_relu_kernel<<<grid_hidden, 256, 0, stream>>>(
+        nn->d_fc1_output[stream_idx], nn->d_bias1, batch_size, HIDDEN_SIZE);
+
+    // Forward matmul 2
+    CUBLAS_CHECK(cublasSgemm(nn->cublas_handle, CUBLAS_OP_N, CUBLAS_OP_N,
+                           OUTPUT_SIZE, batch_size, HIDDEN_SIZE,
+                           &alpha, nn->d_weights2, OUTPUT_SIZE,
+                           nn->d_fc1_output[stream_idx], HIDDEN_SIZE, &beta,
+                           nn->d_fc2_output[stream_idx], OUTPUT_SIZE));
+
+    // Bias add (no ReLU for output layer)
+    int total_out = batch_size * OUTPUT_SIZE;
+    int grid_out = (total_out + 255) / 256;
+    bias_add_kernel<<<grid_out, 256, 0, stream>>>(
+        nn->d_fc2_output[stream_idx], nn->d_bias2, batch_size, OUTPUT_SIZE);
 }
 
-// Backward pass using cuBLAS (same as v6, need reliable gradients)
+// Backward pass using stream
 void backward_pass_stream(NeuralNetworkCUDA *nn, int stream_idx, int batch_size) {
     const float alpha = 1.0f, beta = 0.0f;
     cudaStream_t stream = nn->streams[stream_idx];
     
     CUBLAS_CHECK(cublasSetStream(nn->cublas_handle, stream));
     
+    // [NEW in v6] cudaMemsetAsync instead of cudaMemset (non-blocking)
     CUDA_CHECK(cudaMemsetAsync(nn->d_grad_weights1, 0, INPUT_SIZE * HIDDEN_SIZE * sizeof(float), stream));
     CUDA_CHECK(cudaMemsetAsync(nn->d_grad_weights2, 0, HIDDEN_SIZE * OUTPUT_SIZE * sizeof(float), stream));
     CUDA_CHECK(cudaMemsetAsync(nn->d_grad_bias1, 0, HIDDEN_SIZE * sizeof(float), stream));
     CUDA_CHECK(cudaMemsetAsync(nn->d_grad_bias2, 0, OUTPUT_SIZE * sizeof(float), stream));
 
-    // dW2 = hidden.T @ grad_output
+    // Backward matmul 2a
     CUBLAS_CHECK(cublasSgemm(nn->cublas_handle, CUBLAS_OP_N, CUBLAS_OP_T,
                            OUTPUT_SIZE, HIDDEN_SIZE, batch_size,
                            &alpha, nn->d_grad_output[stream_idx], OUTPUT_SIZE,
@@ -337,7 +287,7 @@ void backward_pass_stream(NeuralNetworkCUDA *nn, int stream_idx, int batch_size)
     bias_backward_kernel<<<grid_out, 256, 0, stream>>>(
         nn->d_grad_output[stream_idx], nn->d_grad_bias2, batch_size, OUTPUT_SIZE);
 
-    // grad_hidden = grad_output @ W2.T
+    // Backward matmul 2b
     CUBLAS_CHECK(cublasSgemm(nn->cublas_handle, CUBLAS_OP_T, CUBLAS_OP_N,
                            HIDDEN_SIZE, batch_size, OUTPUT_SIZE,
                            &alpha, nn->d_weights2, OUTPUT_SIZE,
@@ -350,7 +300,7 @@ void backward_pass_stream(NeuralNetworkCUDA *nn, int stream_idx, int batch_size)
     relu_backward_kernel<<<grid_hidden, 256, 0, stream>>>(
         nn->d_grad_hidden[stream_idx], nn->d_fc1_output[stream_idx], total_hidden);
 
-    // dW1 = input.T @ grad_hidden
+    // Backward matmul 1a
     CUBLAS_CHECK(cublasSgemm(nn->cublas_handle, CUBLAS_OP_N, CUBLAS_OP_T,
                            HIDDEN_SIZE, INPUT_SIZE, batch_size,
                            &alpha, nn->d_grad_hidden[stream_idx], HIDDEN_SIZE,
@@ -361,6 +311,7 @@ void backward_pass_stream(NeuralNetworkCUDA *nn, int stream_idx, int batch_size)
         nn->d_grad_hidden[stream_idx], nn->d_grad_bias1, batch_size, HIDDEN_SIZE);
 }
 
+// Weight updates using stream
 void update_weights_stream(NeuralNetworkCUDA *nn, float lr, int stream_idx) {
     float neg_lr = -lr;
     cudaStream_t stream = nn->streams[stream_idx];
@@ -386,10 +337,11 @@ float compute_loss_on_gpu_stream(NeuralNetworkCUDA *nn, int stream_idx, int batc
         nn->d_grad_output[stream_idx], nn->d_loss[stream_idx],
         batch_size, OUTPUT_SIZE);
 
+    // Async copy loss back (will sync later)
     CUDA_CHECK(cudaMemcpyAsync(h_loss, nn->d_loss[stream_idx], 
                                batch_size * sizeof(float), cudaMemcpyDeviceToHost, stream));
     
-    return 0.0f;
+    return 0.0f;  // Loss computed after sync
 }
 
 void initialize_random_weights_cuda(NeuralNetworkCUDA *nn) {
@@ -415,6 +367,7 @@ void initialize_random_weights_cuda(NeuralNetworkCUDA *nn) {
 }
 
 void initialize_nn_cuda(NeuralNetworkCUDA *nn) {
+    // Network weights and gradients (shared across streams)
     CUDA_CHECK(cudaMalloc(&nn->d_weights1, INPUT_SIZE * HIDDEN_SIZE * sizeof(float)));
     CUDA_CHECK(cudaMalloc(&nn->d_weights2, HIDDEN_SIZE * OUTPUT_SIZE * sizeof(float)));
     CUDA_CHECK(cudaMalloc(&nn->d_bias1, HIDDEN_SIZE * sizeof(float)));
@@ -424,6 +377,7 @@ void initialize_nn_cuda(NeuralNetworkCUDA *nn) {
     CUDA_CHECK(cudaMalloc(&nn->d_grad_bias1, HIDDEN_SIZE * sizeof(float)));
     CUDA_CHECK(cudaMalloc(&nn->d_grad_bias2, OUTPUT_SIZE * sizeof(float)));
 
+    // Double-buffered per-stream allocations
     for (int i = 0; i < NUM_STREAMS; i++) {
         CUDA_CHECK(cudaMalloc(&nn->d_fc1_output[i], BATCH_SIZE * HIDDEN_SIZE * sizeof(float)));
         CUDA_CHECK(cudaMalloc(&nn->d_fc2_output[i], BATCH_SIZE * OUTPUT_SIZE * sizeof(float)));
@@ -433,6 +387,7 @@ void initialize_nn_cuda(NeuralNetworkCUDA *nn) {
         CUDA_CHECK(cudaMalloc(&nn->d_labels[i], BATCH_SIZE * sizeof(int)));
         CUDA_CHECK(cudaMalloc(&nn->d_loss[i], BATCH_SIZE * sizeof(float)));
         
+        // Create streams
         CUDA_CHECK(cudaStreamCreate(&nn->streams[i]));
     }
 
@@ -472,6 +427,7 @@ void evaluate(NeuralNetworkCUDA *nn, float *X_test, int *y_test) {
     float *hidden = (float *)malloc(BATCH_SIZE * HIDDEN_SIZE * sizeof(float));
     float *output = (float *)malloc(BATCH_SIZE * OUTPUT_SIZE * sizeof(float));
     
+    // Copy weights to host (use stream 0's buffers don't matter, weights are shared)
     float *h_W1 = (float *)malloc(INPUT_SIZE * HIDDEN_SIZE * sizeof(float));
     float *h_W2 = (float *)malloc(HIDDEN_SIZE * OUTPUT_SIZE * sizeof(float));
     float *h_b1 = (float *)malloc(HIDDEN_SIZE * sizeof(float));
@@ -486,31 +442,25 @@ void evaluate(NeuralNetworkCUDA *nn, float *X_test, int *y_test) {
         float *batch_x = X_test + batch * BATCH_SIZE * INPUT_SIZE;
         int *batch_y = y_test + batch * BATCH_SIZE;
         
-        // Forward: hidden = relu(W1 @ X + b1)
-        // cuBLAS stores W1 as [HIDDEN, INPUT] column-major: W1[h,i] = h_W1[h + i * HIDDEN_SIZE]
-        // Operation: hidden[b,h] = sum_i input[b,i] * W1[h,i] + b1[h]
-        for (int b = 0; b < BATCH_SIZE; b++) {
-            for (int h = 0; h < HIDDEN_SIZE; h++) {
-                float sum = h_b1[h];
-                for (int i = 0; i < INPUT_SIZE; i++) {
-                    // W1[h,i] in column-major [HIDDEN, INPUT] = W1[h + i * HIDDEN_SIZE]
-                    sum += batch_x[b * INPUT_SIZE + i] * h_W1[h + i * HIDDEN_SIZE];
+        // Forward: hidden = relu(X @ W1 + b1)
+        for (int i = 0; i < BATCH_SIZE; i++) {
+            for (int j = 0; j < HIDDEN_SIZE; j++) {
+                float sum = h_b1[j];
+                for (int k = 0; k < INPUT_SIZE; k++) {
+                    sum += batch_x[i * INPUT_SIZE + k] * h_W1[k * HIDDEN_SIZE + j];
                 }
-                hidden[b * HIDDEN_SIZE + h] = fmaxf(0.0f, sum);
+                hidden[i * HIDDEN_SIZE + j] = fmaxf(0.0f, sum);
             }
         }
         
-        // Forward: output = W2 @ hidden + b2
-        // cuBLAS stores W2 as [OUTPUT, HIDDEN] column-major: W2[o,h] = h_W2[o + h * OUTPUT_SIZE]
-        // Operation: output[b,o] = sum_h hidden[b,h] * W2[o,h] + b2[o]
-        for (int b = 0; b < BATCH_SIZE; b++) {
-            for (int o = 0; o < OUTPUT_SIZE; o++) {
-                float sum = h_b2[o];
-                for (int h = 0; h < HIDDEN_SIZE; h++) {
-                    // W2[o,h] in column-major [OUTPUT, HIDDEN] = W2[o + h * OUTPUT_SIZE]
-                    sum += hidden[b * HIDDEN_SIZE + h] * h_W2[o + h * OUTPUT_SIZE];
+        // Forward: output = hidden @ W2 + b2
+        for (int i = 0; i < BATCH_SIZE; i++) {
+            for (int j = 0; j < OUTPUT_SIZE; j++) {
+                float sum = h_b2[j];
+                for (int k = 0; k < HIDDEN_SIZE; k++) {
+                    sum += hidden[i * HIDDEN_SIZE + k] * h_W2[k * OUTPUT_SIZE + j];
                 }
-                output[b * OUTPUT_SIZE + o] = sum;
+                output[i * OUTPUT_SIZE + j] = sum;
             }
         }
         
@@ -538,11 +488,17 @@ void evaluate(NeuralNetworkCUDA *nn, float *X_test, int *y_test) {
 int main() {
     srand(12345);
 
+    // ============================================================
+    // [NEW in v6] PINNED MEMORY: Faster H2D transfers
+    // v5: malloc (pageable) -> cudaMemcpy must copy to staging buffer first
+    // v6: cudaMallocHost (pinned) -> DMA direct transfer, ~2x faster
+    // ============================================================
     float *train_data;
     int *train_labels;
     CUDA_CHECK(cudaMallocHost(&train_data, TRAIN_SIZE * INPUT_SIZE * sizeof(float)));
     CUDA_CHECK(cudaMallocHost(&train_labels, TRAIN_SIZE * sizeof(int)));
     
+    // Test data (regular malloc, not timed)
     float *test_data = (float *)malloc(TEST_SIZE * INPUT_SIZE * sizeof(float));
     int *test_labels = (int *)malloc(TEST_SIZE * sizeof(int));
     
@@ -553,6 +509,7 @@ int main() {
     normalize_data(test_data, TEST_SIZE * INPUT_SIZE);
     load_labels("./data/y_test.bin", test_labels, TEST_SIZE);
 
+    // Pinned memory for loss results
     float *h_loss[NUM_STREAMS];
     for (int i = 0; i < NUM_STREAMS; i++) {
         CUDA_CHECK(cudaMallocHost(&h_loss[i], BATCH_SIZE * sizeof(float)));
@@ -575,17 +532,25 @@ int main() {
             float *batch_input = train_data + batch * BATCH_SIZE * INPUT_SIZE;
             int *batch_labels_ptr = train_labels + batch * BATCH_SIZE;
 
+            // Wait for previous batch on this stream to complete
             if (batch >= NUM_STREAMS) {
                 clock_gettime(CLOCK_MONOTONIC, &step_start);
                 CUDA_CHECK(cudaStreamSynchronize(nn.streams[stream_idx]));
                 clock_gettime(CLOCK_MONOTONIC, &step_end);
-                stats.sync_wait += get_time_diff(step_start, step_end);
+                stats.stream_sync += get_time_diff(step_start, step_end);
                 
+                // Collect loss from previous batch on this stream
                 for (int i = 0; i < BATCH_SIZE; i++) {
                     total_loss += h_loss[stream_idx][i];
                 }
             }
 
+            // ============================================================
+            // [NEW in v6] ASYNC H2D Transfer with cudaMemcpyAsync
+            // v5: cudaMemcpy (blocking) -> CPU waits for transfer
+            // v6: cudaMemcpyAsync (non-blocking) -> CPU returns immediately
+            //     Transfer happens in background while CPU queues next ops
+            // ============================================================
             clock_gettime(CLOCK_MONOTONIC, &step_start);
             CUDA_CHECK(cudaMemcpyAsync(nn.d_input_batch[stream_idx], batch_input, 
                                        BATCH_SIZE * INPUT_SIZE * sizeof(float), 
@@ -594,8 +559,9 @@ int main() {
                                        BATCH_SIZE * sizeof(int), 
                                        cudaMemcpyHostToDevice, nn.streams[stream_idx]));
             clock_gettime(CLOCK_MONOTONIC, &step_end);
-            stats.memory_transfers += get_time_diff(step_start, step_end);
+            stats.h2d_submit += get_time_diff(step_start, step_end);
 
+            // === GPU Computation (async) ===
             clock_gettime(CLOCK_MONOTONIC, &step_start);
             
             forward_pass_stream(&nn, stream_idx, BATCH_SIZE);
@@ -604,9 +570,10 @@ int main() {
             update_weights_stream(&nn, LEARNING_RATE, stream_idx);
             
             clock_gettime(CLOCK_MONOTONIC, &step_end);
-            stats.gpu_compute += get_time_diff(step_start, step_end);
+            stats.kernel_launch += get_time_diff(step_start, step_end);
         }
 
+        // Collect remaining losses
         for (int s = 0; s < NUM_STREAMS; s++) {
             clock_gettime(CLOCK_MONOTONIC, &step_start);
             CUDA_CHECK(cudaStreamSynchronize(nn.streams[s]));
@@ -627,25 +594,27 @@ int main() {
     clock_gettime(CLOCK_MONOTONIC, &end);
     stats.total_time = get_time_diff(start, end);
     
-    printf("\n=== CUSTOM FUSED GEMM (EDUCATIONAL) ===\n");
+    printf("\n=== CUDA STREAMS + PINNED MEMORY + FUSED KERNELS ===\n");
     printf("Total training time: %.3f seconds\n\n", stats.total_time);
 
     printf("Timing Breakdown:\n");
-    printf("  H2D issue:      %6.3fs (%5.1f%%)\n", 
-           stats.memory_transfers, 100.0 * stats.memory_transfers / stats.total_time);
-    printf("  GPU issue:      %6.3fs (%5.1f%%)\n", 
-           stats.gpu_compute, 100.0 * stats.gpu_compute / stats.total_time);
-    printf("  Sync wait:      %6.3fs (%5.1f%%)\n", 
-           stats.sync_wait, 100.0 * stats.sync_wait / stats.total_time);
+    printf("  H2D submit:     %6.3fs (%5.1f%%)  <- cudaMemcpyAsync call time\n", 
+           stats.h2d_submit, 100.0 * stats.h2d_submit / stats.total_time);
+    printf("  Kernel launch:  %6.3fs (%5.1f%%)  <- kernel<<<>>> and cuBLAS call time\n", 
+           stats.kernel_launch, 100.0 * stats.kernel_launch / stats.total_time);
+    printf("  Stream sync:    %6.3fs (%5.1f%%)  <- actual GPU execution time\n", 
+           stats.stream_sync, 100.0 * stats.stream_sync / stats.total_time);
     
-    double accounted = stats.memory_transfers + stats.gpu_compute + stats.sync_wait;
-    printf("  Other:          %6.3fs (%5.1f%%)\n",
+    double accounted = stats.h2d_submit + stats.kernel_launch + stats.stream_sync;
+    printf("  Other:          %6.3fs (%5.1f%%)  <- CPU overhead (loss reduction, etc.)\n",
            stats.total_time - accounted, 100.0 * (stats.total_time - accounted) / stats.total_time);
 
+    // Evaluate on test set (not timed)
     evaluate(&nn, test_data, test_labels);
 
     free_nn_cuda(&nn);
     
+    // Free pinned memory
     CUDA_CHECK(cudaFreeHost(train_data));
     CUDA_CHECK(cudaFreeHost(train_labels));
     free(test_data);
