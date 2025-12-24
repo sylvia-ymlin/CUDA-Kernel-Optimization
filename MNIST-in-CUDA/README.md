@@ -38,6 +38,31 @@ nvcc --version
 nvidia-smi --query-gpu=name,compute_cap,memory.total --format=csv
 ```
 
+## Usage
+
+```bash
+cd MNIST-in-CUDA/src
+
+# Download MNIST data (run once)
+python3 downloader.py
+
+# v1: PyTorch baseline
+python3 v1.py
+
+# v2: NumPy implementation
+python3 v2.py
+
+# v3: C implementation
+gcc -O2 -o v3 v3.c -lm && ./v3
+
+# v4-v8: CUDA implementations
+nvcc -O2 -o v4 v4.cu && ./v4
+nvcc -O2 -lcublas -o v5 v5.cu && ./v5
+nvcc -O2 -lcublas -o v6 v6.cu && ./v6
+nvcc -O2 -lcublas -o v7 v7.cu && ./v7
+nvcc -O2 -lcublas -o v8 v8.cu && ./v8
+```
+
 ## Version Progression
 
 ### v1.py - PyTorch Baseline
