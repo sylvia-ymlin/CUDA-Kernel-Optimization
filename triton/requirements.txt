@@ -1,6 +1,5 @@
 # Triton GPU kernel development dependencies
 # Requires NVIDIA GPU with CUDA support
-
+python>=3.10
 torch>=2.0.0
 triton>=2.1.0
-
