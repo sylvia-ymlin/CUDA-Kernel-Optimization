@@ -28,8 +28,8 @@ cuda-kernels-from-scratch/
 | [mnist-cuda/](mnist-cuda/) | MLP training | PyTorch → C → CUDA → FP16, 1012× speedup |
 | [pytorch-extension/](pytorch-extension/) | PyTorch extension | Polynomial activation kernel |
 | [triton/](triton/) | Triton kernels | vec_add, softmax |
-| [profiling/](profiling/) | Profiling guides | Nsight Systems/Compute |
-| [lectures/](lectures/) | Lecture notes | GPU programming PDFs |
+| [profiling/](profiling/) | Profiling | Nsight Systems/Compute |
+| [lectures/](lectures/) | Lecture notes | - |
 
 ## Build & Run
 
